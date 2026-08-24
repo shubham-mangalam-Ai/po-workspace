@@ -1,0 +1,5 @@
+html, body { margin: 0; padding: 0; background: #EFEDE3; font-family: 'Inter', system-ui, sans-serif; }
+* { box-sizing: border-box; }
+button { font-family: inherit; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #C6BFA8; border-radius: 4px; }
