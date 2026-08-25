@@ -36,8 +36,8 @@ npm run dev
 ```
 
 Open http://localhost:3000 — you should see "Opening the register..." then
-the app. The default admin PIN is **2026** (change it immediately from the
-Companies tab once you're in).
+the app. Both admin PINs default to **2026** (change them immediately from
+the Companies tab once you're in — see "Security model" below).
 
 ## 3. Deploy to Vercel
 
@@ -70,16 +70,35 @@ refactor wouldn't touch the UI code in `components/POWorkspace.jsx` much.
 
 ## Security model — what's protected and what isn't
 
-- **Vendors and Settings** (which includes the admin PIN, standard terms,
-  and approval authorities) require the correct PIN, checked **on the
-  server**, before any write is accepted. The PIN itself is never sent to
-  the browser — `/api/admin/verify-pin` compares it server-side and only
-  returns `true`/`false`.
+There are **two separate admin PINs**, checked on the server:
+
+- **Process POs PIN** — unlocks the "Process POs" tab (pricing, generating
+  PO numbers, deleting requests) and the "Vendors" tab (vendor details +
+  bank info).
+- **Companies PIN** — unlocks the "Companies" tab (project/company list,
+  standard terms, quick-add items, approval authorities, and the ability to
+  change *both* PINs).
+
+Both are set from inside the Companies tab and default to `2026` until
+changed — **change them immediately after your first deploy**, and give
+each PIN only to the people who actually need that tab.
+
+Neither PIN is ever sent to the browser in plain text. `/api/admin/verify-pin`
+compares the entered PIN against the stored one on the server and returns
+only `true`/`false`; the `/api/kv` GET route also strips both PIN fields out
+of the `settings` document before it's returned to any client.
+
 - **Companies** writes are open (no PIN), because the original design lets
   any employee add a new project/company inline while raising a request.
 - **Requests** writes are open (no PIN), because both employees (raising a
   request, confirming receipt) and admins (pricing, generating, deleting)
   need to write to it.
+
+**Employees never see priced/generated PO documents.** The Track tab (the
+employee-facing view) only shows status + the PO number once generated —
+never the full PO (line-item pricing, GST breakdown, or vendor bank
+details). That full document only renders from inside the Process POs tab,
+which is behind the Process POs PIN.
 
 **This means the PIN is a soft, single-shared-secret control** — good
 enough for an internal tool used by a small trusted team, but it does not
