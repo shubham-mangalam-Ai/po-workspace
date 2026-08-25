@@ -6,9 +6,12 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import {
   Plus, Trash2, Printer, X, Check, ClipboardList, Stamp, Building2,
-  ArrowLeft, Loader2, FileText, ChevronRight, Clock, CheckCircle2,
+  ArrowLeft, Loader2, ChevronRight, Clock, CheckCircle2,
   AlertCircle, Lock, Unlock, PackageCheck, FileSpreadsheet, Truck, Pencil,
+  RefreshCw,
 } from "lucide-react";
+
+const POLL_INTERVAL_MS = 8000;
 
 const INK = "#1B2A4A";
 const INK_SOFT = "#4A567A";
@@ -94,10 +97,6 @@ function rupee(n) {
   const v = Math.round((Number(n) || 0) * 100) / 100;
   return "\u20B9" + v.toLocaleString("en-IN");
 }
-function rupeePdf(n) {
-  const v = Math.round((Number(n) || 0) * 100) / 100;
-  return "Rs. " + v.toLocaleString("en-IN");
-}
 function blankItem() {
   return { id: uid(), description: "", qty: 1, unit: "pkt", rate: "", gstPercent: 18 };
 }
@@ -158,12 +157,12 @@ async function kvSet(key, value, pin) {
     return { ok: false, error: "Network error while saving." };
   }
 }
-async function verifyPinOnServer(pin) {
+async function verifyPinOnServer(pin, scope) {
   try {
     const res = await fetch("/api/admin/verify-pin", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pin }),
+      body: JSON.stringify({ pin, scope }),
     });
     if (!res.ok) return false;
     const data = await res.json();
@@ -171,6 +170,27 @@ async function verifyPinOnServer(pin) {
   } catch (e) {
     return false;
   }
+}
+
+// Fetches all four documents in parallel and normalizes them against the
+// defaults. Used both for the initial load and for background refreshes,
+// so every client (and every open tab/device) converges on the same data
+// instead of only seeing what it itself last wrote.
+async function fetchAllData() {
+  const [cRes, vRes, rRes, sRes] = await Promise.all([
+    kvGet("companies"), kvGet("vendors"), kvGet("requests"), kvGet("settings"),
+  ]);
+  const c = cRes.value, v = vRes.value, r = rRes.value, s = sRes.value;
+  return {
+    companies: c && c.length ? c : DEFAULT_COMPANIES,
+    vendors: v && v.length ? v : DEFAULT_VENDORS,
+    requests: r || [],
+    settings: {
+      terms: s && s.terms && s.terms.length ? s.terms : DEFAULT_TERMS,
+      quickItems: s && s.quickItems && s.quickItems.length ? s.quickItems : DEFAULT_QUICK_ITEMS,
+      authorities: s && s.authorities && s.authorities.length ? s.authorities : DEFAULT_AUTHORITIES,
+    },
+  };
 }
 
 function itemAmount(it) {
@@ -298,31 +318,69 @@ export default function POWorkspace() {
   const [toast, setToast] = useState("");
   const [newCompanyOpen, setNewCompanyOpen] = useState(false);
   const [newCompany, setNewCompany] = useState({ name: "", registeredAddress: "", gst: "", poPrefix: "ML" });
-  const [adminUnlocked, setAdminUnlocked] = useState(false);
-  const [adminPin, setAdminPin] = useState("");
+  // Two separate admin areas with two separate PINs:
+  //  - "process" unlocks Process POs (pricing/generating/deleting requests) + Vendors
+  //  - "company" unlocks Companies (company list, terms, quick-add items,
+  //    approval authorities, and both PINs themselves)
+  const [processUnlocked, setProcessUnlocked] = useState(false);
+  const [processPinValue, setProcessPinValue] = useState(""); // in memory only, sent with vendor saves
+  const [companyUnlocked, setCompanyUnlocked] = useState(false);
+  const [companyPinValue, setCompanyPinValue] = useState(""); // in memory only, sent with settings saves
   const [pinInput, setPinInput] = useState("");
   const [unlocking, setUnlocking] = useState(false);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
 
+  // Initial load: also seeds the draft form, which we deliberately do NOT
+  // touch again on later refreshes (that would wipe out an in-progress
+  // request someone is typing).
   useEffect(() => {
     (async () => {
-      const [cRes, vRes, rRes, sRes] = await Promise.all([
-        kvGet("companies"), kvGet("vendors"), kvGet("requests"), kvGet("settings"),
-      ]);
-      const c = cRes.value, v = vRes.value, r = rRes.value, s = sRes.value;
-      const companiesList = c && c.length ? c : DEFAULT_COMPANIES;
-      const vendorsList = v && v.length ? v : DEFAULT_VENDORS;
-      setCompanies(companiesList);
-      setVendors(vendorsList);
-      setRequests(r || []);
-      setSettings({
-        terms: s && s.terms && s.terms.length ? s.terms : DEFAULT_TERMS,
-        quickItems: s && s.quickItems && s.quickItems.length ? s.quickItems : DEFAULT_QUICK_ITEMS,
-        authorities: s && s.authorities && s.authorities.length ? s.authorities : DEFAULT_AUTHORITIES,
-      });
-      setDraft(newRequest(companiesList[0].id, vendorsList[0].id, companiesList[0]));
+      const data = await fetchAllData();
+      setCompanies(data.companies);
+      setVendors(data.vendors);
+      setRequests(data.requests);
+      setSettings(data.settings);
+      setDraft(newRequest(data.companies[0].id, data.vendors[0].id, data.companies[0]));
       setLoading(false);
     })();
   }, []);
+
+  // Background polling so everyone sees everyone else's changes without a
+  // manual page reload -- e.g. admin prices a request while a site
+  // supervisor has the Track tab open, or two admins both have the queue
+  // open at once. Paused while the tab is hidden, and never touches the
+  // in-progress draft, selected tab, or admin-unlocked state.
+  useEffect(() => {
+    if (loading) return;
+    let cancelled = false;
+    async function poll() {
+      if (typeof document !== "undefined" && document.hidden) return;
+      const data = await fetchAllData();
+      if (cancelled) return;
+      setCompanies(data.companies);
+      setVendors(data.vendors);
+      setRequests(data.requests);
+      setSettings(data.settings);
+    }
+    const id = setInterval(poll, POLL_INTERVAL_MS);
+    document.addEventListener("visibilitychange", poll);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", poll);
+    };
+  }, [loading]);
+
+  async function refreshNow() {
+    setManualRefreshing(true);
+    const data = await fetchAllData();
+    setCompanies(data.companies);
+    setVendors(data.vendors);
+    setRequests(data.requests);
+    setSettings(data.settings);
+    setManualRefreshing(false);
+    flash("Refreshed.");
+  }
 
   function flash(msg) {
     setToast(msg);
@@ -343,25 +401,34 @@ export default function POWorkspace() {
   }
   async function persistVendors(next) {
     setVendors(next);
-    const res = await kvSet("vendors", next, adminPin);
+    const res = await kvSet("vendors", next, processPinValue);
     if (!res.ok) flash(res.error || "Could not save — check connection and retry.");
     return res.ok;
   }
-  async function persistSettings(next) {
-    setSettings(next);
-    const res = await kvSet("settings", next, adminPin);
+  // "next" here is a PARTIAL update (e.g. just { terms } or just { companyPin }).
+  // The server merges it into the stored settings doc, and we mirror that
+  // merge locally so we don't clobber fields (like quickItems/authorities)
+  // that weren't part of this particular save.
+  async function persistSettings(partial) {
+    setSettings((prev) => ({ ...prev, ...partial }));
+    const res = await kvSet("settings", partial, companyPinValue);
     if (!res.ok) flash(res.error || "Could not save — check connection and retry.");
     return res.ok;
   }
 
-  async function tryUnlock() {
+  async function tryUnlock(scope) {
     if (!pinInput.trim() || unlocking) return;
     setUnlocking(true);
-    const ok = await verifyPinOnServer(pinInput.trim());
+    const ok = await verifyPinOnServer(pinInput.trim(), scope);
     setUnlocking(false);
     if (ok) {
-      setAdminPin(pinInput.trim());
-      setAdminUnlocked(true);
+      if (scope === "process") {
+        setProcessPinValue(pinInput.trim());
+        setProcessUnlocked(true);
+      } else {
+        setCompanyPinValue(pinInput.trim());
+        setCompanyUnlocked(true);
+      }
       setPinInput("");
       flash("Admin unlocked for this session.");
     } else {
@@ -456,7 +523,7 @@ export default function POWorkspace() {
           <div>
             <div style={{ fontFamily: F_DISPLAY, fontSize: 19, letterSpacing: "0.02em" }}>PO Register</div>
             <div style={{ fontSize: 11, color: "#B9C2D6", letterSpacing: "0.04em" }}>
-              {adminUnlocked ? "Admin session active" : "Site view — requests and tracking only"}
+              {processUnlocked || companyUnlocked ? "Admin session active" : "Site view — requests and tracking only"}
             </div>
           </div>
         </div>
@@ -484,8 +551,11 @@ export default function POWorkspace() {
               </button>
             ))}
           </div>
-          {adminUnlocked && (
-            <button onClick={() => { setAdminUnlocked(false); setAdminPin(""); }} title="Lock admin" style={{ background: "transparent", border: "none", color: "#DAD3C0", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+          <button onClick={refreshNow} disabled={manualRefreshing} title="Refresh data" style={{ background: "transparent", border: "none", color: "#DAD3C0", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+            <RefreshCw size={14} className={manualRefreshing ? "animate-spin" : ""} /> {manualRefreshing ? "Refreshing..." : "Refresh"}
+          </button>
+          {(processUnlocked || companyUnlocked) && (
+            <button onClick={() => { setProcessUnlocked(false); setProcessPinValue(""); setCompanyUnlocked(false); setCompanyPinValue(""); }} title="Lock admin" style={{ background: "transparent", border: "none", color: "#DAD3C0", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
               <Unlock size={14} /> Lock
             </button>
           )}
@@ -511,14 +581,17 @@ export default function POWorkspace() {
         )}
 
         {tab === "track" && (
-          <TrackTab requests={requests} companyOf={companyOf} onMarkReceived={markReceived} onView={(id) => setPrintId(id)} />
+          <TrackTab requests={requests} companyOf={companyOf} onMarkReceived={markReceived} onDelete={deleteRequest} />
         )}
 
-        {tab === "admin" && !adminUnlocked && <AdminGate pinInput={pinInput} setPinInput={setPinInput} onUnlock={tryUnlock} unlocking={unlocking} />}
-        {tab === "admin" && adminUnlocked && !selectedReq && (
+        {tab === "admin" && !processUnlocked && (
+          <AdminGate pinInput={pinInput} setPinInput={setPinInput} onUnlock={() => tryUnlock("process")} unlocking={unlocking}
+            title="Process POs access" description="Enter the Process POs PIN to price requests, generate PO numbers, and manage the queue." />
+        )}
+        {tab === "admin" && processUnlocked && !selectedReq && (
           <AdminQueueTab pending={pending} issued={issued} companyOf={companyOf} onOpen={(id) => setSelectedId(id)} onView={(id) => setPrintId(id)} onDelete={deleteRequest} />
         )}
-        {tab === "admin" && adminUnlocked && selectedReq && (
+        {tab === "admin" && processUnlocked && selectedReq && (
           <PricingEditor
             req={selectedReq}
             company={companyOf(selectedReq.companyId)}
@@ -531,27 +604,37 @@ export default function POWorkspace() {
           />
         )}
 
-        {tab === "vendors" && !adminUnlocked && <AdminGate pinInput={pinInput} setPinInput={setPinInput} onUnlock={tryUnlock} unlocking={unlocking} />}
-        {tab === "vendors" && adminUnlocked && <VendorsTab vendors={vendors} onSave={persistVendors} />}
+        {tab === "vendors" && !processUnlocked && (
+          <AdminGate pinInput={pinInput} setPinInput={setPinInput} onUnlock={() => tryUnlock("process")} unlocking={unlocking}
+            title="Vendors access" description="Vendors share the Process POs PIN. Enter it to manage vendor details and bank info." />
+        )}
+        {tab === "vendors" && processUnlocked && <VendorsTab vendors={vendors} onSave={persistVendors} />}
 
-        {tab === "companies" && !adminUnlocked && <AdminGate pinInput={pinInput} setPinInput={setPinInput} onUnlock={tryUnlock} unlocking={unlocking} />}
-        {tab === "companies" && adminUnlocked && (
+        {tab === "companies" && !companyUnlocked && (
+          <AdminGate pinInput={pinInput} setPinInput={setPinInput} onUnlock={() => tryUnlock("company")} unlocking={unlocking}
+            title="Companies access" description="Enter the Companies PIN to manage projects, standard terms, quick-add items, approval authorities, and both admin PINs." />
+        )}
+        {tab === "companies" && companyUnlocked && (
           <CompaniesTab
             companies={companies} requests={requests} onSaveCompanies={persistCompanies}
-            settings={settings} adminPin={adminPin}
-            onChangePin={async (pin) => {
-              const ok = await persistSettings({ ...settings, adminPin: pin });
-              if (ok) setAdminPin(pin);
+            settings={settings}
+            onChangeCompanyPin={async (pin) => {
+              const ok = await persistSettings({ companyPin: pin });
+              if (ok) setCompanyPinValue(pin);
               return ok;
             }}
-            onChangeTerms={(terms) => persistSettings({ ...settings, terms })}
-            onChangeQuickItems={(quickItems) => persistSettings({ ...settings, quickItems })}
-            onChangeAuthorities={(authorities) => persistSettings({ ...settings, authorities })}
+            onChangeProcessPin={async (pin) => persistSettings({ processPin: pin })}
+            onChangeTerms={(terms) => persistSettings({ terms })}
+            onChangeQuickItems={(quickItems) => persistSettings({ quickItems })}
+            onChangeAuthorities={(authorities) => persistSettings({ authorities })}
           />
         )}
       </div>
 
-      {printReq && (
+      {/* Full PO view (pricing + vendor bank details) is admin-only, opened
+          from the Process POs queue. Site staff on the Track tab never get
+          a way to set printId, so this never renders for them. */}
+      {printReq && processUnlocked && (
         <POPrint
           req={printReq}
           company={companyOf(printReq.companyId)}
@@ -565,16 +648,16 @@ export default function POWorkspace() {
   );
 }
 
-function AdminGate({ pinInput, setPinInput, onUnlock, unlocking }) {
+function AdminGate({ pinInput, setPinInput, onUnlock, unlocking, title, description }) {
   return (
     <div style={{ maxWidth: 360, margin: "40px auto", background: PAPER_CARD, border: `1px solid ${RULE}`, borderRadius: 10, padding: 24, textAlign: "center" }}>
       <Lock size={26} color={INK_SOFT} style={{ marginBottom: 10 }} />
-      <div style={{ fontFamily: F_DISPLAY, fontSize: 17, marginBottom: 4 }}>Admin access required</div>
-      <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 16 }}>Only the PO admin manages vendors, companies, and generates purchase orders. Enter the admin PIN to continue.</div>
-      <input type="password" inputMode="numeric" placeholder="Admin PIN" value={pinInput} onChange={(e) => setPinInput(e.target.value)}
+      <div style={{ fontFamily: F_DISPLAY, fontSize: 17, marginBottom: 4 }}>{title || "Admin access required"}</div>
+      <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 16 }}>{description || "Enter the admin PIN to continue."}</div>
+      <input type="password" inputMode="numeric" placeholder="PIN" value={pinInput} onChange={(e) => setPinInput(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && onUnlock()}
         style={{ width: "100%", textAlign: "center", fontFamily: F_MONO, fontSize: 16, letterSpacing: "0.2em", padding: "10px 12px", border: `1px solid ${RULE}`, borderRadius: 6, marginBottom: 12, boxSizing: "border-box" }} />
-      <Btn variant="stamp" onClick={onUnlock} disabled={unlocking} style={{ width: "100%", justifyContent: "center" }}><Unlock size={14} />{unlocking ? "Checking..." : "Unlock admin"}</Btn>
+      <Btn variant="stamp" onClick={onUnlock} disabled={unlocking} style={{ width: "100%", justifyContent: "center" }}><Unlock size={14} />{unlocking ? "Checking..." : "Unlock"}</Btn>
     </div>
   );
 }
@@ -704,7 +787,7 @@ function RequestTab({ companies, vendors, draft, setDraft, updateDraftItem, addD
   );
 }
 
-function TrackTab({ requests, companyOf, onMarkReceived, onView }) {
+function TrackTab({ requests, companyOf, onMarkReceived, onDelete }) {
   const sorted = useMemo(() => [...requests].sort((a, b) => b.createdAt - a.createdAt), [requests]);
   return (
     <div>
@@ -724,10 +807,8 @@ function TrackTab({ requests, companyOf, onMarkReceived, onView }) {
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <Stamp3 text={b.text} color={b.color} />
+                {r.status === "pending" && <ConfirmDelete onConfirm={() => onDelete(r.id)} label="Cancel this request" />}
                 {r.status === "generated" && <ReceivedButton onConfirm={(name) => onMarkReceived(r.id, name)} />}
-                {(r.status === "generated" || r.status === "received") && (
-                  <IconBtn onClick={() => onView(r.id)} title="View PO"><FileText size={14} /></IconBtn>
-                )}
               </div>
             </div>
           );
@@ -1045,8 +1126,9 @@ function VendorsTab({ vendors, onSave }) {
   );
 }
 
-function CompaniesTab({ companies, requests, onSaveCompanies, settings, adminPin, onChangePin, onChangeTerms, onChangeQuickItems, onChangeAuthorities }) {
-  const [pin, setPin] = useState(adminPin || DEFAULT_PIN);
+function CompaniesTab({ companies, requests, onSaveCompanies, settings, onChangeCompanyPin, onChangeProcessPin, onChangeTerms, onChangeQuickItems, onChangeAuthorities }) {
+  const [companyPinInput, setCompanyPinInput] = useState("");
+  const [processPinInput, setProcessPinInput] = useState("");
   const [termsText, setTermsText] = useState((settings.terms || DEFAULT_TERMS).join("\n"));
   const [quickText, setQuickText] = useState((settings.quickItems || DEFAULT_QUICK_ITEMS).join("\n"));
   const [authText, setAuthText] = useState((settings.authorities || DEFAULT_AUTHORITIES).join("\n"));
@@ -1067,16 +1149,27 @@ function CompaniesTab({ companies, requests, onSaveCompanies, settings, adminPin
 
   return (
     <div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
         <div style={{ background: "#fff", border: `1px solid ${RULE}`, borderRadius: 8, padding: 14 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Admin PIN</div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Companies section PIN</div>
           <div style={{ display: "flex", gap: 8 }}>
-            <input value={pin} onChange={(e) => setPin(e.target.value)} style={{ fontFamily: F_MONO, fontSize: 14, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6, flex: 1 }} />
-            <Btn variant="primary" onClick={() => onChangePin(pin)}><Check size={14} /></Btn>
+            <input placeholder="New PIN" value={companyPinInput} onChange={(e) => setCompanyPinInput(e.target.value)} style={{ fontFamily: F_MONO, fontSize: 14, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6, flex: 1 }} />
+            <Btn variant="primary" onClick={() => { if (companyPinInput.trim()) { onChangeCompanyPin(companyPinInput.trim()); setCompanyPinInput(""); } }}><Check size={14} /></Btn>
           </div>
-          <div style={{ fontSize: 11, color: INK_SOFT, marginTop: 6 }}>Share only with people who price and generate POs.</div>
+          <div style={{ fontSize: 11, color: INK_SOFT, marginTop: 6 }}>Unlocks this Companies tab (projects, terms, quick-add items, authorities, and both PINs). Share only with whoever manages company/project setup.</div>
         </div>
 
+        <div style={{ background: "#fff", border: `1px solid ${RULE}`, borderRadius: 8, padding: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Process POs &amp; Vendors PIN</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input placeholder="New PIN" value={processPinInput} onChange={(e) => setProcessPinInput(e.target.value)} style={{ fontFamily: F_MONO, fontSize: 14, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6, flex: 1 }} />
+            <Btn variant="primary" onClick={() => { if (processPinInput.trim()) { onChangeProcessPin(processPinInput.trim()); setProcessPinInput(""); } }}><Check size={14} /></Btn>
+          </div>
+          <div style={{ fontSize: 11, color: INK_SOFT, marginTop: 6 }}>Unlocks Process POs (pricing/generating) and Vendors. Share only with whoever prices and generates POs.</div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
         <div style={{ background: "#fff", border: `1px solid ${RULE}`, borderRadius: 8, padding: 14 }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Quick-add materials (one per line)</div>
           <textarea value={quickText} onChange={(e) => setQuickText(e.target.value)} rows={4}
@@ -1283,15 +1376,15 @@ function generateRealPdf(req, company, vendor, terms, authorities) {
   y = doc.lastAutoTable.finalY + 14;
 
   ensureRoom(120);
-    const totalsRows = [
-    ["Taxable Amount", rupeePdf(totals.taxable)],
-    ["Total GST", rupeePdf(totals.gst)],
-    ["SGST @ 9%", rupeePdf(totals.sgst)],
-    ["CGST @ 9%", rupeePdf(totals.cgst)],
+  const totalsRows = [
+    ["Taxable Amount", rupee(totals.taxable)],
+    ["Total GST", rupee(totals.gst)],
+    ["SGST @ 9%", rupee(totals.sgst)],
+    ["CGST @ 9%", rupee(totals.cgst)],
   ];
-  if (totals.transportExtra > 0) totalsRows.push(["Transport & Installation", rupeePdf(totals.transportExtra)]);
+  if (totals.transportExtra > 0) totalsRows.push(["Transport & Installation", rupee(totals.transportExtra)]);
   else totalsRows.push(["Transport & Installation", String(req.transportNote || "Including")]);
-  totalsRows.push(["Grand Total", rupeePdf(totals.grand)]);
+  totalsRows.push(["Grand Total", rupee(totals.grand)]);
 
   autoTable(doc, {
     startY: y,
