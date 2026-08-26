@@ -865,6 +865,10 @@ function ProjectDashboard({ auth, onExit }) {
   const [category, setCategory] = useState("");
   const [items, setItems] = useState([blankItem()]);
   const [submitting, setSubmitting] = useState(false);
+  const [siteAddress, setSiteAddress] = useState("");
+  const [siteContactPerson, setSiteContactPerson] = useState("");
+  const [siteContactMobile, setSiteContactMobile] = useState("");
+  const siteFieldsSeeded = useRef(false);
 
   function flash(msg) {
     setToast(msg);
@@ -878,6 +882,15 @@ function ProjectDashboard({ auth, onExit }) {
       setCompany(data.company);
       setRequests(data.requests || []);
       setQuickItems(data.quickItems && data.quickItems.length ? data.quickItems : DEFAULT_QUICK_ITEMS);
+      // Seed the editable site fields from the company's defaults, but only
+      // once -- later refreshes/polls must not overwrite what the person is
+      // actively typing.
+      if (!siteFieldsSeeded.current && data.company) {
+        setSiteAddress(data.company.siteAddress || "");
+        setSiteContactPerson(data.company.siteContactPerson || "");
+        setSiteContactMobile(data.company.siteContactMobile || "");
+        siteFieldsSeeded.current = true;
+      }
     } else if (showSpinner) {
       flash("Could not load your data. Your session may have expired.");
     }
@@ -922,10 +935,18 @@ function ProjectDashboard({ auth, onExit }) {
 
   async function submitRequest() {
     if (!requestedBy.trim()) return flash("Enter your name.");
+    if (!siteAddress.trim()) return flash("Enter the delivery / site address.");
     const cleanItems = items.filter((it) => it.description.trim());
     if (!cleanItems.length) return flash("Add at least one material line.");
     setSubmitting(true);
-    const res = await projectAction(companyId, pin, "submit", { requestedBy: requestedBy.trim(), category, items: cleanItems });
+    const res = await projectAction(companyId, pin, "submit", {
+      requestedBy: requestedBy.trim(),
+      category,
+      items: cleanItems,
+      siteAddress: siteAddress.trim(),
+      siteContactPerson: siteContactPerson.trim(),
+      siteContactMobile: siteContactMobile.trim(),
+    });
     setSubmitting(false);
     if (!res.ok) return flash(res.error || "Could not send the request.");
     flash("Request sent to PO admin.");
@@ -1009,6 +1030,13 @@ function ProjectDashboard({ auth, onExit }) {
 
               <div style={{ marginBottom: 12 }}>
                 <LabeledInput label="Your name" placeholder="Requested by" value={requestedBy} onChange={(e) => setRequestedBy(e.target.value)} />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+                <LabeledInput label="Site contact person" value={siteContactPerson} onChange={(e) => setSiteContactPerson(e.target.value)} />
+                <LabeledInput label="Site contact mobile" value={siteContactMobile} onChange={(e) => setSiteContactMobile(e.target.value)} />
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <LabeledInput label="Delivery / site address" placeholder="Where should this be delivered?" value={siteAddress} onChange={(e) => setSiteAddress(e.target.value)} />
               </div>
               <div style={{ marginBottom: 16 }}>
                 <LabeledInput label="What's this order for (label shown on PO)" placeholder="e.g. Register Book For Engg & Store" value={category} onChange={(e) => setCategory(e.target.value)} />
