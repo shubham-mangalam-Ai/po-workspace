@@ -128,7 +128,7 @@ function blankVendor() {
   return { id: uid(), name: "", address: "", contactPerson: "", contactMobile: "", gst: "", bankName: "", accountNo: "", ifsc: "", branch: "" };
 }
 function blankCompany() {
-  return { id: uid(), name: "", poPrefix: "ML", gst: "", registeredAddress: "", siteAddress: "", siteContactPerson: "", siteContactMobile: "", lastSeq: 300 };
+  return { id: uid(), name: "", poPrefix: "ML", gst: "", registeredAddress: "", siteAddress: "", siteContactPerson: "", siteContactMobile: "", lastSeq: 300, accessPin: "" };
 }
 
 async function kvGet(key) {
@@ -305,7 +305,11 @@ function ConfirmDelete({ onConfirm, label = "Delete" }) {
   );
 }
 
-export default function POWorkspace() {
+// The original full-access app: everyone entering here already proved they
+// know one of the two admin PINs at the entry gate (see POWorkspace below).
+// Raise Request / Track are unrestricted (all companies) because this is
+// the admin's own workspace, not the per-company one.
+function AdminApp({ initialScope, initialPinValue, onExit }) {
   const [loading, setLoading] = useState(true);
   const [companies, setCompanies] = useState(DEFAULT_COMPANIES);
   const [vendors, setVendors] = useState(DEFAULT_VENDORS);
@@ -322,10 +326,12 @@ export default function POWorkspace() {
   //  - "process" unlocks Process POs (pricing/generating/deleting requests) + Vendors
   //  - "company" unlocks Companies (company list, terms, quick-add items,
   //    approval authorities, and both PINs themselves)
-  const [processUnlocked, setProcessUnlocked] = useState(false);
-  const [processPinValue, setProcessPinValue] = useState(""); // in memory only, sent with vendor saves
-  const [companyUnlocked, setCompanyUnlocked] = useState(false);
-  const [companyPinValue, setCompanyPinValue] = useState(""); // in memory only, sent with settings saves
+  // Seeded from whichever PIN was used to pass the entry gate, so that tab
+  // is already open; the other admin area still needs its own PIN.
+  const [processUnlocked, setProcessUnlocked] = useState(initialScope === "process");
+  const [processPinValue, setProcessPinValue] = useState(initialScope === "process" ? initialPinValue : "");
+  const [companyUnlocked, setCompanyUnlocked] = useState(initialScope === "company");
+  const [companyPinValue, setCompanyPinValue] = useState(initialScope === "company" ? initialPinValue : "");
   const [pinInput, setPinInput] = useState("");
   const [unlocking, setUnlocking] = useState(false);
   const [manualRefreshing, setManualRefreshing] = useState(false);
@@ -523,7 +529,7 @@ export default function POWorkspace() {
           <div>
             <div style={{ fontFamily: F_DISPLAY, fontSize: 19, letterSpacing: "0.02em" }}>PO Register</div>
             <div style={{ fontSize: 11, color: "#B9C2D6", letterSpacing: "0.04em" }}>
-              {processUnlocked || companyUnlocked ? "Admin session active" : "Site view — requests and tracking only"}
+              Admin workspace {(processUnlocked || companyUnlocked) ? "— extra areas unlocked" : ""}
             </div>
           </div>
         </div>
@@ -559,6 +565,9 @@ export default function POWorkspace() {
               <Unlock size={14} /> Lock
             </button>
           )}
+          <button onClick={onExit} title="Sign out" style={{ background: "transparent", border: `1px solid rgba(255,255,255,0.25)`, borderRadius: 6, padding: "6px 10px", color: "#F3EFE3", cursor: "pointer", fontSize: 12 }}>
+            Sign out
+          </button>
         </div>
       </div>
 
@@ -644,6 +653,451 @@ export default function POWorkspace() {
           onClose={() => setPrintId(null)}
         />
       )}
+    </div>
+  );
+}
+
+const PROJECT_SESSION_KEY = "po_project_session_v1";
+
+async function verifyProjectPinOnServer(pin) {
+  try {
+    const res = await fetch("/api/project/verify-pin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.ok ? { companyId: data.companyId, companyName: data.companyName } : null;
+  } catch (e) {
+    return null;
+  }
+}
+async function projectList(companyId, pin) {
+  try {
+    const res = await fetch("/api/project/list", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ companyId, pin }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    return null;
+  }
+}
+async function projectAction(companyId, pin, action, payload) {
+  try {
+    const res = await fetch("/api/project/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ companyId, pin, action, ...payload }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data.error || `Request failed (${res.status})` };
+    return { ok: true, ...data };
+  } catch (e) {
+    return { ok: false, error: "Network error." };
+  }
+}
+
+// Top-level entry point. Nobody sees any data -- not even a full list of
+// companies -- until they've proven they know either a project's PIN
+// (scoped to that one company) or an admin PIN (full access). This is
+// also enforced server-side: the project routes re-check the PIN on every
+// call, and AdminApp's own data fetch only ever runs after this gate
+// passes, so an unauthenticated visitor's browser never even requests the
+// full companies/vendors/requests documents.
+export default function POWorkspace() {
+  const [entryMode, setEntryMode] = useState(null); // null | "project" | "admin"
+  const [checkingSession, setCheckingSession] = useState(true);
+  const [projectAuth, setProjectAuth] = useState(null); // { companyId, pin, companyName }
+  const [adminEntry, setAdminEntry] = useState(null); // { scope, pin }
+
+  // Try to silently resume a project session saved in this browser tab
+  // (sessionStorage -- cleared when the tab closes, unlike localStorage).
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = typeof window !== "undefined" ? sessionStorage.getItem(PROJECT_SESSION_KEY) : null;
+        if (raw) {
+          const saved = JSON.parse(raw);
+          const result = await verifyProjectPinOnServer(saved.pin);
+          if (result && result.companyId === saved.companyId) {
+            setProjectAuth({ companyId: result.companyId, companyName: result.companyName, pin: saved.pin });
+            setEntryMode("project");
+            setCheckingSession(false);
+            return;
+          }
+          sessionStorage.removeItem(PROJECT_SESSION_KEY);
+        }
+      } catch (e) {}
+      setCheckingSession(false);
+    })();
+  }, []);
+
+  function handleProjectLogin(auth) {
+    setProjectAuth(auth);
+    setEntryMode("project");
+    try {
+      sessionStorage.setItem(PROJECT_SESSION_KEY, JSON.stringify({ companyId: auth.companyId, pin: auth.pin }));
+    } catch (e) {}
+  }
+  function handleAdminLogin(scope, pin) {
+    setAdminEntry({ scope, pin });
+    setEntryMode("admin");
+  }
+  function handleExit() {
+    setEntryMode(null);
+    setProjectAuth(null);
+    setAdminEntry(null);
+    try { sessionStorage.removeItem(PROJECT_SESSION_KEY); } catch (e) {}
+  }
+
+  if (checkingSession) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: F_BODY, color: INK_SOFT }}>
+        <Loader2 size={20} className="animate-spin" style={{ marginRight: 8 }} />
+        Opening the register...
+      </div>
+    );
+  }
+
+  if (entryMode === "project" && projectAuth) {
+    return <ProjectDashboard auth={projectAuth} onExit={handleExit} />;
+  }
+  if (entryMode === "admin" && adminEntry) {
+    return <AdminApp initialScope={adminEntry.scope} initialPinValue={adminEntry.pin} onExit={handleExit} />;
+  }
+  return <GateScreen onProjectLogin={handleProjectLogin} onAdminLogin={handleAdminLogin} />;
+}
+
+function GateScreen({ onProjectLogin, onAdminLogin }) {
+  const [mode, setMode] = useState(null); // null | "project" | "admin"
+  const [pinInput, setPinInput] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submitProject() {
+    if (!pinInput.trim() || checking) return;
+    setChecking(true);
+    setError("");
+    const result = await verifyProjectPinOnServer(pinInput.trim());
+    setChecking(false);
+    if (result) onProjectLogin({ ...result, pin: pinInput.trim() });
+    else setError("PIN not recognized. Check with your PO admin.");
+  }
+  async function submitAdmin() {
+    if (!pinInput.trim() || checking) return;
+    setChecking(true);
+    setError("");
+    const processOk = await verifyPinOnServer(pinInput.trim(), "process");
+    if (processOk) {
+      setChecking(false);
+      onAdminLogin("process", pinInput.trim());
+      return;
+    }
+    const companyOk = await verifyPinOnServer(pinInput.trim(), "company");
+    setChecking(false);
+    if (companyOk) onAdminLogin("company", pinInput.trim());
+    else setError("Wrong PIN.");
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: PAPER, fontFamily: F_BODY, padding: 24 }}>
+      <div style={{ maxWidth: 380, width: "100%", background: PAPER_CARD, border: `1px solid ${RULE}`, borderRadius: 12, padding: 28, textAlign: "center" }}>
+        <Stamp size={26} color={INK} style={{ marginBottom: 10 }} />
+        <div style={{ fontFamily: F_DISPLAY, fontSize: 20, color: INK, marginBottom: 4 }}>PO Register</div>
+
+        {mode === null && (
+          <>
+            <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 20 }}>Choose how you'd like to sign in.</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <Btn variant="stamp" onClick={() => setMode("project")} style={{ justifyContent: "center" }}><ClipboardList size={15} />I'm a project / company</Btn>
+              <Btn variant="primary" onClick={() => setMode("admin")} style={{ justifyContent: "center" }}><Lock size={14} />Admin</Btn>
+            </div>
+          </>
+        )}
+
+        {mode === "project" && (
+          <>
+            <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 16 }}>Enter your project's access PIN, given to you by the PO admin.</div>
+            <input type="password" inputMode="numeric" placeholder="Project PIN" value={pinInput} onChange={(e) => setPinInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submitProject()}
+              style={{ width: "100%", textAlign: "center", fontFamily: F_MONO, fontSize: 16, letterSpacing: "0.2em", padding: "10px 12px", border: `1px solid ${RULE}`, borderRadius: 6, marginBottom: 12, boxSizing: "border-box" }} />
+            {error && <div style={{ fontSize: 12, color: "#9B2C2C", marginBottom: 12 }}>{error}</div>}
+            <Btn variant="stamp" onClick={submitProject} disabled={checking} style={{ width: "100%", justifyContent: "center", marginBottom: 8 }}>{checking ? "Checking..." : "Continue"}</Btn>
+            <Btn variant="ghost" onClick={() => { setMode(null); setPinInput(""); setError(""); }} style={{ width: "100%", justifyContent: "center" }}><ArrowLeft size={14} />Back</Btn>
+          </>
+        )}
+
+        {mode === "admin" && (
+          <>
+            <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 16 }}>Enter either admin PIN — Process POs or Companies.</div>
+            <input type="password" inputMode="numeric" placeholder="Admin PIN" value={pinInput} onChange={(e) => setPinInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submitAdmin()}
+              style={{ width: "100%", textAlign: "center", fontFamily: F_MONO, fontSize: 16, letterSpacing: "0.2em", padding: "10px 12px", border: `1px solid ${RULE}`, borderRadius: 6, marginBottom: 12, boxSizing: "border-box" }} />
+            {error && <div style={{ fontSize: 12, color: "#9B2C2C", marginBottom: 12 }}>{error}</div>}
+            <Btn variant="primary" onClick={submitAdmin} disabled={checking} style={{ width: "100%", justifyContent: "center", marginBottom: 8 }}>{checking ? "Checking..." : "Continue"}</Btn>
+            <Btn variant="ghost" onClick={() => { setMode(null); setPinInput(""); setError(""); }} style={{ width: "100%", justifyContent: "center" }}><ArrowLeft size={14} />Back</Btn>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// The scoped, per-company dashboard. Only ever talks to /api/project/*,
+// which re-verifies this company's PIN on every call and only ever
+// returns/accepts data for this one companyId -- there is no code path
+// here that can see or touch another company's requests.
+function ProjectDashboard({ auth, onExit }) {
+  const { companyId, pin, companyName } = auth;
+  const [loading, setLoading] = useState(true);
+  const [company, setCompany] = useState(null);
+  const [requests, setRequests] = useState([]);
+  const [quickItems, setQuickItems] = useState(DEFAULT_QUICK_ITEMS);
+  const [tab, setTab] = useState("request");
+  const [toast, setToast] = useState("");
+  const [manualRefreshing, setManualRefreshing] = useState(false);
+
+  const [requestedBy, setRequestedBy] = useState("");
+  const [category, setCategory] = useState("");
+  const [items, setItems] = useState([blankItem()]);
+  const [submitting, setSubmitting] = useState(false);
+
+  function flash(msg) {
+    setToast(msg);
+    setTimeout(() => setToast(""), 4000);
+  }
+
+  async function load(showSpinner) {
+    if (showSpinner) setLoading(true);
+    const data = await projectList(companyId, pin);
+    if (data && data.ok) {
+      setCompany(data.company);
+      setRequests(data.requests || []);
+      setQuickItems(data.quickItems && data.quickItems.length ? data.quickItems : DEFAULT_QUICK_ITEMS);
+    } else if (showSpinner) {
+      flash("Could not load your data. Your session may have expired.");
+    }
+    if (showSpinner) setLoading(false);
+  }
+
+  useEffect(() => {
+    load(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (loading) return;
+    let cancelled = false;
+    async function poll() {
+      if (typeof document !== "undefined" && document.hidden) return;
+      const data = await projectList(companyId, pin);
+      if (cancelled || !data || !data.ok) return;
+      setRequests(data.requests || []);
+    }
+    const id = setInterval(poll, POLL_INTERVAL_MS);
+    document.addEventListener("visibilitychange", poll);
+    return () => { cancelled = true; clearInterval(id); document.removeEventListener("visibilitychange", poll); };
+  }, [loading, companyId, pin]);
+
+  async function refreshNow() {
+    setManualRefreshing(true);
+    await load(false);
+    setManualRefreshing(false);
+    flash("Refreshed.");
+  }
+
+  function updateItem(id, patch) {
+    setItems((its) => its.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+  }
+  function addItem(desc = "") {
+    setItems((its) => [...its, { ...blankItem(), description: desc }]);
+  }
+  function removeItem(id) {
+    setItems((its) => (its.length > 1 ? its.filter((it) => it.id !== id) : its));
+  }
+
+  async function submitRequest() {
+    if (!requestedBy.trim()) return flash("Enter your name.");
+    const cleanItems = items.filter((it) => it.description.trim());
+    if (!cleanItems.length) return flash("Add at least one material line.");
+    setSubmitting(true);
+    const res = await projectAction(companyId, pin, "submit", { requestedBy: requestedBy.trim(), category, items: cleanItems });
+    setSubmitting(false);
+    if (!res.ok) return flash(res.error || "Could not send the request.");
+    flash("Request sent to PO admin.");
+    setCategory("");
+    setItems([blankItem()]);
+    load(false);
+  }
+
+  async function cancelRequest(id) {
+    const res = await projectAction(companyId, pin, "cancel", { requestId: id });
+    if (!res.ok) return flash(res.error || "Could not cancel.");
+    flash("Request cancelled.");
+    load(false);
+  }
+
+  async function markReceived(id, byName) {
+    const res = await projectAction(companyId, pin, "markReceived", { requestId: id, byName });
+    if (!res.ok) return flash(res.error || "Could not confirm receipt.");
+    flash("Admin has been informed material was received.");
+    load(false);
+  }
+
+  if (loading) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: F_BODY, color: INK_SOFT }}>
+        <Loader2 size={20} className="animate-spin" style={{ marginRight: 8 }} />
+        Opening the register...
+      </div>
+    );
+  }
+
+  const sorted = [...requests].sort((a, b) => b.createdAt - a.createdAt);
+
+  return (
+    <div style={{ fontFamily: F_BODY, background: PAPER, minHeight: "100vh", color: INK }}>
+      <div style={{ background: INK, color: "#F3EFE3", padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <Stamp size={22} />
+          <div>
+            <div style={{ fontFamily: F_DISPLAY, fontSize: 19, letterSpacing: "0.02em" }}>PO Register</div>
+            <div style={{ fontSize: 11, color: "#B9C2D6", letterSpacing: "0.04em" }}>{company?.name || companyName}</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", gap: 6, background: "rgba(255,255,255,0.08)", padding: 4, borderRadius: 8 }}>
+            {[
+              { id: "request", label: "Raise request", icon: ClipboardList },
+              { id: "track", label: "Track / Received", icon: PackageCheck },
+            ].map((t) => (
+              <button key={t.id} onClick={() => setTab(t.id)} style={{
+                display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, padding: "7px 12px",
+                borderRadius: 6, cursor: "pointer", border: "none",
+                background: tab === t.id ? "#F3EFE3" : "transparent",
+                color: tab === t.id ? INK : "#DAD3C0",
+              }}>
+                <t.icon size={15} />{t.label}
+              </button>
+            ))}
+          </div>
+          <button onClick={refreshNow} disabled={manualRefreshing} title="Refresh data" style={{ background: "transparent", border: "none", color: "#DAD3C0", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+            <RefreshCw size={14} className={manualRefreshing ? "animate-spin" : ""} /> {manualRefreshing ? "Refreshing..." : "Refresh"}
+          </button>
+          <button onClick={onExit} title="Sign out" style={{ background: "transparent", border: `1px solid rgba(255,255,255,0.25)`, borderRadius: 6, padding: "6px 10px", color: "#F3EFE3", cursor: "pointer", fontSize: 12 }}>
+            Sign out
+          </button>
+        </div>
+      </div>
+
+      {toast && (
+        <div style={{ background: "#FCEBEB", color: "#9B2C2C", padding: "8px 24px", fontSize: 13, borderBottom: `1px solid ${RULE}`, display: "flex", alignItems: "center", gap: 6 }}>
+          <AlertCircle size={14} /> {toast}
+        </div>
+      )}
+
+      <div style={{ padding: 24 }}>
+        {tab === "request" && (
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr)", gap: 20 }}>
+            <div style={{ background: PAPER_CARD, border: `1px solid ${RULE}`, borderRadius: 10, padding: 20 }}>
+              <div style={{ fontFamily: F_DISPLAY, fontSize: 17, marginBottom: 4 }}>New material request</div>
+              <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 16 }}>For {company?.name || companyName}. Rates, GST, and vendor are filled in by the PO admin — you don't need them.</div>
+
+              <div style={{ marginBottom: 12 }}>
+                <LabeledInput label="Your name" placeholder="Requested by" value={requestedBy} onChange={(e) => setRequestedBy(e.target.value)} />
+              </div>
+              <div style={{ marginBottom: 16 }}>
+                <LabeledInput label="What's this order for (label shown on PO)" placeholder="e.g. Register Book For Engg & Store" value={category} onChange={(e) => setCategory(e.target.value)} />
+              </div>
+
+              <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Quick add</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+                {quickItems.map((qi) => (
+                  <button key={qi} onClick={() => addItem(qi)} style={{ fontSize: 12, padding: "5px 10px", borderRadius: 20, border: `1px solid ${RULE}`, background: "#fff", color: INK_SOFT, cursor: "pointer" }}>
+                    + {qi}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Materials</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+                {items.map((it, idx) => (
+                  <div key={it.id} style={{ display: "grid", gridTemplateColumns: "28px 1fr 70px 90px 32px", gap: 8, alignItems: "center" }}>
+                    <div style={{ fontFamily: F_MONO, fontSize: 12, color: INK_SOFT, textAlign: "center" }}>{idx + 1}</div>
+                    <input placeholder="Material description" value={it.description} onChange={(e) => updateItem(it.id, { description: e.target.value })}
+                      style={{ fontFamily: F_BODY, fontSize: 13, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6 }} />
+                    <input type="number" min="0" placeholder="Qty" value={it.qty} onChange={(e) => updateItem(it.id, { qty: e.target.value })}
+                      style={{ fontFamily: F_MONO, fontSize: 13, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6 }} />
+                    <select value={it.unit} onChange={(e) => updateItem(it.id, { unit: e.target.value })} style={{ fontFamily: F_BODY, fontSize: 13, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6 }}>
+                      {UNIT_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                    <button onClick={() => removeItem(it.id)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "#9B2C2C" }} aria-label="Remove line">
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <Btn onClick={() => addItem()}><Plus size={14} />Add line</Btn>
+
+              <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${RULE}`, display: "flex", justifyContent: "flex-end" }}>
+                <Btn variant="stamp" onClick={submitRequest} disabled={submitting}><ClipboardList size={15} />{submitting ? "Sending..." : "Send request to PO admin"}</Btn>
+              </div>
+            </div>
+
+            <div>
+              <div style={{ fontFamily: F_DISPLAY, fontSize: 15, marginBottom: 10 }}>Recent requests</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 640, overflowY: "auto" }}>
+                {sorted.length === 0 && <div style={{ fontSize: 13, color: INK_SOFT }}>No requests raised yet.</div>}
+                {sorted.slice(0, 25).map((r) => {
+                  const b = statusBadge(r);
+                  return (
+                    <div key={r.id} style={{ background: "#fff", border: `1px solid ${RULE}`, borderRadius: 8, padding: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>{r.category || "Material request"}</div>
+                          <div style={{ fontSize: 12, color: INK_SOFT }}>{r.items.length} item{r.items.length !== 1 ? "s" : ""} &middot; {r.requestedBy || "unnamed"}</div>
+                        </div>
+                        <Stamp3 text={b.text} color={b.color} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === "track" && (
+          <div>
+            <div style={{ fontFamily: F_DISPLAY, fontSize: 17, marginBottom: 4 }}>Track requests</div>
+            <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 16 }}>Your project's requests only. Once material arrives at site, confirm receipt here.</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {sorted.length === 0 && <div style={{ fontSize: 13, color: INK_SOFT }}>Nothing raised yet.</div>}
+              {sorted.map((r) => {
+                const b = statusBadge(r);
+                return (
+                  <div key={r.id} style={{ background: "#fff", border: `1px solid ${RULE}`, borderRadius: 8, padding: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 600 }}>{r.category || "Material request"}</div>
+                      <div style={{ fontSize: 12, color: INK_SOFT, marginTop: 2 }}>{r.items.length} item{r.items.length !== 1 ? "s" : ""} &middot; by {r.requestedBy || "—"}</div>
+                      {r.status === "received" && <div style={{ fontSize: 11, color: TEAL, marginTop: 3 }}>Confirmed by {r.materialReceivedBy || "—"}</div>}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <Stamp3 text={b.text} color={b.color} />
+                      {r.status === "pending" && <ConfirmDelete onConfirm={() => cancelRequest(r.id)} label="Cancel this request" />}
+                      {r.status === "generated" && <ReceivedButton onConfirm={(name) => markReceived(r.id, name)} />}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1234,11 +1688,42 @@ function CompaniesTab({ companies, requests, onSaveCompanies, settings, onChange
               <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 4 }}>{c.registeredAddress}</div>
               <div style={{ fontFamily: F_MONO, fontSize: 12, color: BRASS, marginBottom: 6 }}>GST {c.gst}</div>
               <div style={{ fontSize: 11, color: INK_SOFT, marginBottom: 4 }}>Default site: {c.siteAddress || "—"}</div>
-              <div style={{ fontSize: 11, color: INK_SOFT }}>{count} PO{count !== 1 ? "s" : ""} raised &middot; next no. {c.poPrefix}/26-27/{(c.lastSeq || 300) + 1}</div>
+              <div style={{ fontSize: 11, color: INK_SOFT, marginBottom: 8 }}>{count} PO{count !== 1 ? "s" : ""} raised &middot; next no. {c.poPrefix}/26-27/{(c.lastSeq || 300) + 1}</div>
+              <CompanyPinRow company={c} onSet={(pin) => onSaveCompanies(companies.map((x) => (x.id === c.id ? { ...x, accessPin: pin } : x)))} />
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// Small inline control for setting/rotating one company's project-access
+// PIN. The actual current PIN is never sent to the browser (see
+// app/api/kv sanitizeForClient) -- only a "set / not set" flag -- so this
+// only ever accepts a brand new value, never displays the existing one.
+function CompanyPinRow({ company, onSet }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  if (!editing) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, paddingTop: 8, borderTop: `1px solid ${RULE}` }}>
+        <span style={{ fontSize: 11, color: company.hasAccessPin ? TEAL : BRASS }}>
+          Project PIN: {company.hasAccessPin ? "set" : "not set"}
+        </span>
+        <button onClick={() => setEditing(true)} style={{ fontSize: 11, background: "transparent", border: "none", color: INK_SOFT, cursor: "pointer", textDecoration: "underline" }}>
+          {company.hasAccessPin ? "Change" : "Set PIN"}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", gap: 6, paddingTop: 8, borderTop: `1px solid ${RULE}` }}>
+      <input autoFocus placeholder="New project PIN" value={value} onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && value.trim() && (onSet(value.trim()), setEditing(false), setValue(""))}
+        style={{ flex: 1, fontFamily: F_MONO, fontSize: 12, padding: "5px 7px", border: `1px solid ${RULE}`, borderRadius: 5 }} />
+      <Btn variant="primary" style={{ padding: "4px 8px", fontSize: 11 }} onClick={() => { if (value.trim()) { onSet(value.trim()); setEditing(false); setValue(""); } }}><Check size={12} /></Btn>
+      <Btn variant="ghost" style={{ padding: "4px 8px", fontSize: 11 }} onClick={() => { setEditing(false); setValue(""); }}>Cancel</Btn>
     </div>
   );
 }
