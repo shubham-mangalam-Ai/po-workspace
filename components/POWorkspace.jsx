@@ -115,6 +115,19 @@ function rupee(n) {
   const v = Math.round((Number(n) || 0) * 100) / 100;
   return "\u20B9" + v.toLocaleString("en-IN");
 }
+// jsPDF's built-in fonts don't include the ₹ glyph (Unicode U+20B9) --
+// standard-14 PDF fonts only cover WinAnsi/Latin-1. Depending on the
+// viewer (especially Word's "convert PDF to document" feature), the
+// missing glyph gets silently substituted with a wrong character, which
+// is why a generated PDF can show something like "¹1,234" instead of
+// "₹1,234" even though the underlying number is correct. Use this plain
+// "Rs." version anywhere text actually gets drawn into the PDF via
+// doc.text()/autoTable -- never inside the on-screen React UI, which
+// renders ₹ correctly in every browser.
+function rupeePdf(n) {
+  const v = Math.round((Number(n) || 0) * 100) / 100;
+  return "Rs. " + v.toLocaleString("en-IN");
+}
 function blankItem() {
   return { id: uid(), description: "", qty: 1, unit: "pkt", rate: "", gstPercent: 18 };
 }
@@ -2060,14 +2073,14 @@ function generateRealPdf(req, company, vendor, terms, authorities) {
 
   ensureRoom(120);
   const totalsRows = [
-    ["Taxable Amount", rupee(totals.taxable)],
-    ["Total GST", rupee(totals.gst)],
-    ["SGST @ 9%", rupee(totals.sgst)],
-    ["CGST @ 9%", rupee(totals.cgst)],
+    ["Taxable Amount", rupeePdf(totals.taxable)],
+    ["Total GST", rupeePdf(totals.gst)],
+    ["SGST @ 9%", rupeePdf(totals.sgst)],
+    ["CGST @ 9%", rupeePdf(totals.cgst)],
   ];
-  if (totals.transportExtra > 0) totalsRows.push(["Transport & Installation", rupee(totals.transportExtra)]);
+  if (totals.transportExtra > 0) totalsRows.push(["Transport & Installation", rupeePdf(totals.transportExtra)]);
   else totalsRows.push(["Transport & Installation", String(req.transportNote || "Including")]);
-  totalsRows.push(["Grand Total", rupee(totals.grand)]);
+  totalsRows.push(["Grand Total", rupeePdf(totals.grand)]);
 
   autoTable(doc, {
     startY: y,
