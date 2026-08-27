@@ -8,7 +8,7 @@ import {
   Plus, Trash2, Printer, X, Check, ClipboardList, Stamp, Building2,
   ArrowLeft, Loader2, ChevronRight, Clock, CheckCircle2,
   AlertCircle, Lock, Unlock, PackageCheck, FileSpreadsheet, Truck, Pencil,
-  RefreshCw,
+  RefreshCw, BarChart3,
 } from "lucide-react";
 
 const POLL_INTERVAL_MS = 8000;
@@ -28,6 +28,24 @@ const F_MONO = "'IBM Plex Mono', monospace";
 const F_BODY = "'Inter', system-ui, sans-serif";
 
 const UNIT_OPTIONS = ["pkt", "nos", "pcs", "box", "set", "kg", "ltr", "mtr", "roll", "other"];
+
+const MATERIAL_CATEGORIES = ["Stationery", "Housekeeping", "Pantry", "Promotional Materials", "Uniform", "T-Shirts", "Induction Kit"];
+const OFFICE_OPTIONS = ["Site Office", "Sales Office", "Head Office"];
+
+function deriveCategoryLabel(materialCategory, office) {
+  if (materialCategory && office) return `${materialCategory} — ${office}`;
+  return materialCategory || office || "";
+}
+// Parses a "DD/MM/YYYY" string (how dates are stored throughout this app)
+// into a real Date, for date-range filtering in Reports. Returns null for
+// anything unparseable so callers can just skip it.
+function parseDMY(str) {
+  if (!str || typeof str !== "string") return null;
+  const m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return null;
+  const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  return isNaN(d.getTime()) ? null : d;
+}
 
 const DEFAULT_QUICK_ITEMS = [
   "Stage Passing Register", "Curing Register", "Cube Register", "Plumbing Register",
@@ -108,6 +126,8 @@ function newRequest(companyId, vendorId, company) {
     companyId,
     vendorId,
     category: "",
+    materialCategory: "",
+    office: "",
     poNo: "",
     requestDate: todayStr(),
     poDate: "",
@@ -248,6 +268,20 @@ function LabeledInput({ label, ...props }) {
         fontFamily: F_BODY, fontSize: 14, padding: "8px 10px", border: `1px solid ${RULE}`,
         borderRadius: 6, background: "#fff", color: INK, outline: "none", ...(props.style || {}),
       }} />
+    </label>
+  );
+}
+function LabeledSelect({ label, options, placeholder, ...props }) {
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</span>
+      <select {...props} style={{
+        fontFamily: F_BODY, fontSize: 14, padding: "8px 10px", border: `1px solid ${RULE}`,
+        borderRadius: 6, background: "#fff", color: INK, outline: "none", ...(props.style || {}),
+      }}>
+        <option value="">{placeholder || "Select..."}</option>
+        {options.map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
     </label>
   );
 }
@@ -464,7 +498,7 @@ function AdminApp({ initialScope, initialPinValue, onExit }) {
     if (!draft.siteAddress.trim()) return flash("Enter the delivery / site address.");
     const items = draft.items.filter((it) => it.description.trim());
     if (!items.length) return flash("Add at least one material line.");
-    const clean = { ...draft, items };
+    const clean = { ...draft, items, category: deriveCategoryLabel(draft.materialCategory, draft.office) };
     const ok = await persistRequests([clean, ...requests]);
     if (!ok) return;
     flash("Request sent to PO admin.");
@@ -539,6 +573,7 @@ function AdminApp({ initialScope, initialPinValue, onExit }) {
               { id: "request", label: "Raise request", icon: ClipboardList },
               { id: "track", label: "Track / Received", icon: PackageCheck },
               { id: "admin", label: "Process POs", icon: Stamp, gated: true },
+              { id: "reports", label: "Reports", icon: BarChart3, gated: true },
               { id: "vendors", label: "Vendors", icon: Truck, gated: true },
               { id: "companies", label: "Companies", icon: Building2, gated: true },
             ].map((t) => (
@@ -612,6 +647,12 @@ function AdminApp({ initialScope, initialPinValue, onExit }) {
             onReprint={() => setPrintId(selectedId)}
           />
         )}
+
+        {tab === "reports" && !processUnlocked && (
+          <AdminGate pinInput={pinInput} setPinInput={setPinInput} onUnlock={() => tryUnlock("process")} unlocking={unlocking}
+            title="Reports access" description="Reports share the Process POs PIN, since they show pricing across every company." />
+        )}
+        {tab === "reports" && processUnlocked && <ReportsTab requests={requests} companies={companies} />}
 
         {tab === "vendors" && !processUnlocked && (
           <AdminGate pinInput={pinInput} setPinInput={setPinInput} onUnlock={() => tryUnlock("process")} unlocking={unlocking}
@@ -862,7 +903,8 @@ function ProjectDashboard({ auth, onExit }) {
   const [manualRefreshing, setManualRefreshing] = useState(false);
 
   const [requestedBy, setRequestedBy] = useState("");
-  const [category, setCategory] = useState("");
+  const [materialCategory, setMaterialCategory] = useState("");
+  const [office, setOffice] = useState("");
   const [items, setItems] = useState([blankItem()]);
   const [submitting, setSubmitting] = useState(false);
   const [siteAddress, setSiteAddress] = useState("");
@@ -935,13 +977,16 @@ function ProjectDashboard({ auth, onExit }) {
 
   async function submitRequest() {
     if (!requestedBy.trim()) return flash("Enter your name.");
+    if (!materialCategory) return flash("Select a material category.");
+    if (!office) return flash("Select an office.");
     if (!siteAddress.trim()) return flash("Enter the delivery / site address.");
     const cleanItems = items.filter((it) => it.description.trim());
     if (!cleanItems.length) return flash("Add at least one material line.");
     setSubmitting(true);
     const res = await projectAction(companyId, pin, "submit", {
       requestedBy: requestedBy.trim(),
-      category,
+      materialCategory,
+      office,
       items: cleanItems,
       siteAddress: siteAddress.trim(),
       siteContactPerson: siteContactPerson.trim(),
@@ -950,7 +995,8 @@ function ProjectDashboard({ auth, onExit }) {
     setSubmitting(false);
     if (!res.ok) return flash(res.error || "Could not send the request.");
     flash("Request sent to PO admin.");
-    setCategory("");
+    setMaterialCategory("");
+    setOffice("");
     setItems([blankItem()]);
     load(false);
   }
@@ -1039,7 +1085,10 @@ function ProjectDashboard({ auth, onExit }) {
                 <LabeledInput label="Delivery / site address" placeholder="Where should this be delivered?" value={siteAddress} onChange={(e) => setSiteAddress(e.target.value)} />
               </div>
               <div style={{ marginBottom: 16 }}>
-                <LabeledInput label="What's this order for (label shown on PO)" placeholder="e.g. Register Book For Engg & Store" value={category} onChange={(e) => setCategory(e.target.value)} />
+                <LabeledSelect label="Material category" value={materialCategory} onChange={(e) => setMaterialCategory(e.target.value)} options={MATERIAL_CATEGORIES} placeholder="Select category" />
+              </div>
+              <div style={{ marginBottom: 16 }}>
+                <LabeledSelect label="Office" value={office} onChange={(e) => setOffice(e.target.value)} options={OFFICE_OPTIONS} placeholder="Select office" />
               </div>
 
               <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Quick add</div>
@@ -1144,6 +1193,126 @@ function AdminGate({ pinInput, setPinInput, onUnlock, unlocking, title, descript
   );
 }
 
+// Expense reporting dashboard: filter by company / material category /
+// office / date range, see total spend across matching POs. Only requests
+// that are "generated" or "received" carry real pricing (pending ones
+// have no rate yet), so those are the only ones counted here.
+function ReportsTab({ requests, companies }) {
+  const [filterCompanyId, setFilterCompanyId] = useState("");
+  const [filterMaterialCategory, setFilterMaterialCategory] = useState("");
+  const [filterOffice, setFilterOffice] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  const priced = requests.filter((r) => r.status === "generated" || r.status === "received");
+
+  const fromDate = dateFrom ? new Date(dateFrom + "T00:00:00") : null;
+  const toDate = dateTo ? new Date(dateTo + "T23:59:59") : null;
+
+  const filtered = priced.filter((r) => {
+    if (filterCompanyId && r.companyId !== filterCompanyId) return false;
+    if (filterMaterialCategory && r.materialCategory !== filterMaterialCategory) return false;
+    if (filterOffice && r.office !== filterOffice) return false;
+    if (fromDate || toDate) {
+      const d = parseDMY(r.poDate) || parseDMY(r.requestDate);
+      if (!d) return false;
+      if (fromDate && d < fromDate) return false;
+      if (toDate && d > toDate) return false;
+    }
+    return true;
+  });
+
+  const rows = filtered.map((r) => ({ req: r, totals: computeTotals(r.items, r.transportNote) }));
+  const totalExpense = rows.reduce((sum, x) => sum + x.totals.grand, 0);
+
+  function companyName(id) {
+    return (companies.find((c) => c.id === id) || {}).name || "Unknown";
+  }
+  function clearFilters() {
+    setFilterCompanyId(""); setFilterMaterialCategory(""); setFilterOffice(""); setDateFrom(""); setDateTo("");
+  }
+
+  return (
+    <div>
+      <div style={{ fontFamily: F_DISPLAY, fontSize: 17, marginBottom: 4 }}>Expense reports</div>
+      <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 16 }}>Only priced/generated POs are counted — pending requests have no rate yet.</div>
+
+      <div style={{ background: PAPER_CARD, border: `1px solid ${RULE}`, borderRadius: 10, padding: 16, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 12, marginBottom: 4 }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em" }}>Company</span>
+            <select value={filterCompanyId} onChange={(e) => setFilterCompanyId(e.target.value)} style={{ fontSize: 13, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6, background: "#fff" }}>
+              <option value="">All companies</option>
+              {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em" }}>Category</span>
+            <select value={filterMaterialCategory} onChange={(e) => setFilterMaterialCategory(e.target.value)} style={{ fontSize: 13, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6, background: "#fff" }}>
+              <option value="">All categories</option>
+              {MATERIAL_CATEGORIES.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em" }}>Office</span>
+            <select value={filterOffice} onChange={(e) => setFilterOffice(e.target.value)} style={{ fontSize: 13, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6, background: "#fff" }}>
+              <option value="">All offices</option>
+              {OFFICE_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em" }}>From</span>
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={{ fontSize: 13, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6 }} />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em" }}>To</span>
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={{ fontSize: 13, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6 }} />
+          </label>
+        </div>
+        <button onClick={clearFilters} style={{ fontSize: 11, color: INK_SOFT, background: "transparent", border: "none", cursor: "pointer", textDecoration: "underline", marginTop: 8 }}>Clear filters</button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+        <div style={{ background: "#fff", border: `1px solid ${RULE}`, borderRadius: 10, padding: 18 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em" }}>Total expense</div>
+          <div style={{ fontFamily: F_MONO, fontSize: 26, fontWeight: 700, color: INK, marginTop: 4 }}>{rupee(totalExpense)}</div>
+        </div>
+        <div style={{ background: "#fff", border: `1px solid ${RULE}`, borderRadius: 10, padding: 18 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em" }}>Matching POs</div>
+          <div style={{ fontFamily: F_MONO, fontSize: 26, fontWeight: 700, color: INK, marginTop: 4 }}>{rows.length}</div>
+        </div>
+      </div>
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: INK, color: "#F3EFE3" }}>
+              {["Company", "Category", "Office", "PO No", "PO Date", "Amount"].map((h) => (
+                <th key={h} style={{ padding: "8px 10px", textAlign: h === "Amount" ? "right" : "left", fontWeight: 600 }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr><td colSpan={6} style={{ padding: 16, textAlign: "center", color: INK_SOFT, background: "#fff" }}>No matching POs.</td></tr>
+            )}
+            {rows.map(({ req, totals }) => (
+              <tr key={req.id} style={{ borderBottom: `1px solid ${RULE}`, background: "#fff" }}>
+                <td style={{ padding: "8px 10px" }}>{companyName(req.companyId)}</td>
+                <td style={{ padding: "8px 10px" }}>{req.materialCategory || "—"}</td>
+                <td style={{ padding: "8px 10px" }}>{req.office || "—"}</td>
+                <td style={{ padding: "8px 10px", fontFamily: F_MONO, color: BRASS }}>{req.poNo}</td>
+                <td style={{ padding: "8px 10px" }}>{req.poDate}</td>
+                <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: F_MONO, fontWeight: 600 }}>{rupee(totals.grand)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function RequestTab({ companies, vendors, draft, setDraft, updateDraftItem, addDraftItem, removeDraftItem, submitRequest, quickItems, newCompanyOpen, setNewCompanyOpen, newCompany, setNewCompany, addCompany, myRequests }) {
   const vendor = vendors.find((v) => v.id === draft.vendorId) || vendors[0];
   function selectCompany(companyId) {
@@ -1207,8 +1376,9 @@ function RequestTab({ companies, vendors, draft, setDraft, updateDraftItem, addD
         <div style={{ marginBottom: 12 }}>
           <LabeledInput label="Delivery / site address" placeholder="e.g. Mangalam Miraya, Gat no.286, Near Bharat Mata Chowk..." value={draft.siteAddress} onChange={(e) => setDraft((d) => ({ ...d, siteAddress: e.target.value }))} />
         </div>
-        <div style={{ marginBottom: 16 }}>
-          <LabeledInput label="What's this order for (label shown on PO)" placeholder="e.g. Register Book For Engg & Store" value={draft.category} onChange={(e) => setDraft((d) => ({ ...d, category: e.target.value }))} />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+          <LabeledSelect label="Material category" value={draft.materialCategory} onChange={(e) => setDraft((d) => ({ ...d, materialCategory: e.target.value }))} options={MATERIAL_CATEGORIES} placeholder="Select category" />
+          <LabeledSelect label="Office" value={draft.office} onChange={(e) => setDraft((d) => ({ ...d, office: e.target.value }))} options={OFFICE_OPTIONS} placeholder="Select office" />
         </div>
 
         <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Quick add</div>
