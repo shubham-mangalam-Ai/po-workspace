@@ -36,9 +36,15 @@ export async function POST(request) {
     const allRequests = await getRequests(supabase);
 
     if (action === "submit") {
-      const { requestedBy, category, items, siteAddress, siteContactPerson, siteContactMobile } = body;
+      const { requestedBy, materialCategory, office, items, siteAddress, siteContactPerson, siteContactMobile } = body;
       if (!requestedBy || !String(requestedBy).trim()) {
         return NextResponse.json({ error: "Enter your name" }, { status: 400 });
+      }
+      if (!materialCategory || !String(materialCategory).trim()) {
+        return NextResponse.json({ error: "Select a material category" }, { status: 400 });
+      }
+      if (!office || !String(office).trim()) {
+        return NextResponse.json({ error: "Select an office" }, { status: 400 });
       }
       const cleanItems = (Array.isArray(items) ? items : [])
         .filter((it) => it && String(it.description || "").trim())
@@ -60,7 +66,9 @@ export async function POST(request) {
         requestedBy: String(requestedBy).trim(),
         companyId: company.id, // always the authenticated company -- ignores anything the client might send
         vendorId: "", // vendor is chosen by admin while pricing, not by the requester
-        category: category || "",
+        category: `${String(materialCategory).trim()} — ${String(office).trim()}`,
+        materialCategory: String(materialCategory).trim(),
+        office: String(office).trim(),
         poNo: "",
         requestDate: todayStr(),
         poDate: "",
