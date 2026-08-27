@@ -13,17 +13,22 @@ import {
 
 const POLL_INTERVAL_MS = 8000;
 
-const INK = "#1B2A4A";
-const INK_SOFT = "#4A567A";
-const PAPER = "#EFEDE3";
-const PAPER_CARD = "#F8F6EF";
-const RULE = "#C6BFA8";
-const STAMP_RED = "#A63D2F";
-const BRASS = "#8C6A2F";
-const GREEN = "#3F6B4F";
-const TEAL = "#1C6E7A";
+// Modern, clean theme built around the brand red sampled from the logo.
+// These constants are used almost everywhere in the file via template
+// literals (e.g. `1px solid ${RULE}`), so changing the values here reskins
+// the whole app consistently without having to touch every component.
+const INK = "#161A23";          // near-black text
+const INK_SOFT = "#667085";     // muted gray text
+const PAPER = "#F7F7F9";        // light neutral app background
+const PAPER_CARD = "#FFFFFF";   // white cards
+const RULE = "#E5E7EB";         // light gray borders
+const STAMP_RED = "#DB2A27";    // brand red, sampled from the logo
+const BRASS = "#D97706";        // amber -- "pending" status
+const GREEN = "#16A34A";        // green -- "generated" status
+const TEAL = "#0891B2";         // teal -- "received" status
+const CARD_SHADOW = "0 1px 3px rgba(16,24,40,0.06), 0 1px 2px rgba(16,24,40,0.04)";
 
-const F_DISPLAY = "'Special Elite', 'Courier New', monospace";
+const F_DISPLAY = "'Inter', system-ui, sans-serif";
 const F_MONO = "'IBM Plex Mono', monospace";
 const F_BODY = "'Inter', system-ui, sans-serif";
 
@@ -263,10 +268,10 @@ function resolveVendor(req, vendors) {
 function Stamp3({ text, color }) {
   return (
     <div style={{
-      display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px",
-      border: `2px solid ${color}`, borderRadius: 3, color,
-      fontFamily: F_MONO, fontSize: 11, fontWeight: 600, letterSpacing: "0.08em",
-      textTransform: "uppercase", transform: "rotate(-2deg)", background: `${color}14`, whiteSpace: "nowrap",
+      display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 11px",
+      border: `1px solid ${color}40`, borderRadius: 999, color,
+      fontFamily: F_BODY, fontSize: 11.5, fontWeight: 600, letterSpacing: "0.02em",
+      background: `${color}14`, whiteSpace: "nowrap",
     }}>
       {text}
     </div>
@@ -570,18 +575,18 @@ function AdminApp({ initialScope, initialPinValue, onExit }) {
 
   return (
     <div style={{ fontFamily: F_BODY, background: PAPER, minHeight: "100vh", color: INK }}>
-      <div style={{ background: INK, color: "#F3EFE3", padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+      <div style={{ background: "#fff", color: INK, padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, borderBottom: `3px solid ${STAMP_RED}`, boxShadow: CARD_SHADOW }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <Stamp size={22} />
+          <img src="/logo.png" alt="Company logo" style={{ height: 34, width: "auto", display: "block" }} />
           <div>
-            <div style={{ fontFamily: F_DISPLAY, fontSize: 19, letterSpacing: "0.02em" }}>PO Register</div>
-            <div style={{ fontSize: 11, color: "#B9C2D6", letterSpacing: "0.04em" }}>
+            <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 19, letterSpacing: "0.01em" }}>PO Register</div>
+            <div style={{ fontSize: 11, color: INK_SOFT }}>
               Admin workspace {(processUnlocked || companyUnlocked) ? "— extra areas unlocked" : ""}
             </div>
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ display: "flex", gap: 6, background: "rgba(255,255,255,0.08)", padding: 4, borderRadius: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 4, background: PAPER, padding: 4, borderRadius: 10, flexWrap: "wrap", border: `1px solid ${RULE}` }}>
             {[
               { id: "request", label: "Raise request", icon: ClipboardList },
               { id: "track", label: "Track / Received", icon: PackageCheck },
@@ -592,35 +597,35 @@ function AdminApp({ initialScope, initialPinValue, onExit }) {
             ].map((t) => (
               <button key={t.id} onClick={() => setTab(t.id)} style={{
                 display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, padding: "7px 12px",
-                borderRadius: 6, cursor: "pointer", border: "none",
-                background: tab === t.id ? "#F3EFE3" : "transparent",
-                color: tab === t.id ? INK : "#DAD3C0",
+                borderRadius: 7, cursor: "pointer", border: "none",
+                background: tab === t.id ? STAMP_RED : "transparent",
+                color: tab === t.id ? "#fff" : INK_SOFT,
               }}>
                 <t.icon size={15} />
                 {t.label}
                 {t.gated && <Lock size={11} style={{ opacity: 0.7 }} />}
                 {t.id === "admin" && pending.length > 0 && (
-                  <span style={{ background: STAMP_RED, color: "#fff", borderRadius: 10, fontSize: 10, padding: "1px 6px", marginLeft: 2 }}>{pending.length}</span>
+                  <span style={{ background: tab === t.id ? "#fff" : STAMP_RED, color: tab === t.id ? STAMP_RED : "#fff", borderRadius: 10, fontSize: 10, padding: "1px 6px", marginLeft: 2, fontWeight: 700 }}>{pending.length}</span>
                 )}
               </button>
             ))}
           </div>
-          <button onClick={refreshNow} disabled={manualRefreshing} title="Refresh data" style={{ background: "transparent", border: "none", color: "#DAD3C0", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+          <button onClick={refreshNow} disabled={manualRefreshing} title="Refresh data" style={{ background: "transparent", border: "none", color: INK_SOFT, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
             <RefreshCw size={14} className={manualRefreshing ? "animate-spin" : ""} /> {manualRefreshing ? "Refreshing..." : "Refresh"}
           </button>
           {(processUnlocked || companyUnlocked) && (
-            <button onClick={() => { setProcessUnlocked(false); setProcessPinValue(""); setCompanyUnlocked(false); setCompanyPinValue(""); }} title="Lock admin" style={{ background: "transparent", border: "none", color: "#DAD3C0", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+            <button onClick={() => { setProcessUnlocked(false); setProcessPinValue(""); setCompanyUnlocked(false); setCompanyPinValue(""); }} title="Lock admin" style={{ background: "transparent", border: "none", color: INK_SOFT, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
               <Unlock size={14} /> Lock
             </button>
           )}
-          <button onClick={onExit} title="Sign out" style={{ background: "transparent", border: `1px solid rgba(255,255,255,0.25)`, borderRadius: 6, padding: "6px 10px", color: "#F3EFE3", cursor: "pointer", fontSize: 12 }}>
+          <button onClick={onExit} title="Sign out" style={{ background: "transparent", border: `1px solid ${RULE}`, borderRadius: 7, padding: "6px 10px", color: INK, cursor: "pointer", fontSize: 12 }}>
             Sign out
           </button>
         </div>
       </div>
 
       {toast && (
-        <div style={{ background: "#FCEBEB", color: "#9B2C2C", padding: "8px 24px", fontSize: 13, borderBottom: `1px solid ${RULE}`, display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ background: "#FEF2F2", color: "#B42318", padding: "8px 24px", fontSize: 13, borderBottom: `1px solid ${RULE}`, display: "flex", alignItems: "center", gap: 6 }}>
           <AlertCircle size={14} /> {toast}
         </div>
       )}
@@ -860,8 +865,8 @@ function GateScreen({ onProjectLogin, onAdminLogin }) {
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: PAPER, fontFamily: F_BODY, padding: 24 }}>
       <div style={{ maxWidth: 380, width: "100%", background: PAPER_CARD, border: `1px solid ${RULE}`, borderRadius: 12, padding: 28, textAlign: "center" }}>
-        <Stamp size={26} color={INK} style={{ marginBottom: 10 }} />
-        <div style={{ fontFamily: F_DISPLAY, fontSize: 20, color: INK, marginBottom: 4 }}>PO Register</div>
+        <img src="/logo.png" alt="Company logo" style={{ height: 64, width: "auto", margin: "0 auto 14px", display: "block" }} />
+        <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 20, color: INK, marginBottom: 4 }}>PO Register</div>
 
         {mode === null && (
           <>
@@ -1041,34 +1046,34 @@ function ProjectDashboard({ auth, onExit }) {
 
   return (
     <div style={{ fontFamily: F_BODY, background: PAPER, minHeight: "100vh", color: INK }}>
-      <div style={{ background: INK, color: "#F3EFE3", padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+      <div style={{ background: "#fff", color: INK, padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, borderBottom: `3px solid ${STAMP_RED}`, boxShadow: CARD_SHADOW }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <Stamp size={22} />
+          <img src="/logo.png" alt="Company logo" style={{ height: 34, width: "auto", display: "block" }} />
           <div>
-            <div style={{ fontFamily: F_DISPLAY, fontSize: 19, letterSpacing: "0.02em" }}>PO Register</div>
-            <div style={{ fontSize: 11, color: "#B9C2D6", letterSpacing: "0.04em" }}>{company?.name || companyName}</div>
+            <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 19, letterSpacing: "0.01em" }}>PO Register</div>
+            <div style={{ fontSize: 11, color: INK_SOFT }}>{company?.name || companyName}</div>
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ display: "flex", gap: 6, background: "rgba(255,255,255,0.08)", padding: 4, borderRadius: 8 }}>
+          <div style={{ display: "flex", gap: 4, background: PAPER, padding: 4, borderRadius: 10, border: `1px solid ${RULE}` }}>
             {[
               { id: "request", label: "Raise request", icon: ClipboardList },
               { id: "track", label: "Track / Received", icon: PackageCheck },
             ].map((t) => (
               <button key={t.id} onClick={() => setTab(t.id)} style={{
                 display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, padding: "7px 12px",
-                borderRadius: 6, cursor: "pointer", border: "none",
-                background: tab === t.id ? "#F3EFE3" : "transparent",
-                color: tab === t.id ? INK : "#DAD3C0",
+                borderRadius: 7, cursor: "pointer", border: "none",
+                background: tab === t.id ? STAMP_RED : "transparent",
+                color: tab === t.id ? "#fff" : INK_SOFT,
               }}>
                 <t.icon size={15} />{t.label}
               </button>
             ))}
           </div>
-          <button onClick={refreshNow} disabled={manualRefreshing} title="Refresh data" style={{ background: "transparent", border: "none", color: "#DAD3C0", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+          <button onClick={refreshNow} disabled={manualRefreshing} title="Refresh data" style={{ background: "transparent", border: "none", color: INK_SOFT, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
             <RefreshCw size={14} className={manualRefreshing ? "animate-spin" : ""} /> {manualRefreshing ? "Refreshing..." : "Refresh"}
           </button>
-          <button onClick={onExit} title="Sign out" style={{ background: "transparent", border: `1px solid rgba(255,255,255,0.25)`, borderRadius: 6, padding: "6px 10px", color: "#F3EFE3", cursor: "pointer", fontSize: 12 }}>
+          <button onClick={onExit} title="Sign out" style={{ background: "transparent", border: `1px solid ${RULE}`, borderRadius: 7, padding: "6px 10px", color: INK, cursor: "pointer", fontSize: 12 }}>
             Sign out
           </button>
         </div>
@@ -1084,7 +1089,7 @@ function ProjectDashboard({ auth, onExit }) {
         {tab === "request" && (
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr)", gap: 20 }}>
             <div style={{ background: PAPER_CARD, border: `1px solid ${RULE}`, borderRadius: 10, padding: 20 }}>
-              <div style={{ fontFamily: F_DISPLAY, fontSize: 17, marginBottom: 4 }}>New material request</div>
+              <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 17, marginBottom: 4 }}>New material request</div>
               <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 16 }}>For {company?.name || companyName}. Rates, GST, and vendor are filled in by the PO admin — you don't need them.</div>
 
               <div style={{ marginBottom: 12 }}>
@@ -1139,7 +1144,7 @@ function ProjectDashboard({ auth, onExit }) {
             </div>
 
             <div>
-              <div style={{ fontFamily: F_DISPLAY, fontSize: 15, marginBottom: 10 }}>Recent requests</div>
+              <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 15, marginBottom: 10 }}>Recent requests</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 640, overflowY: "auto" }}>
                 {sorted.length === 0 && <div style={{ fontSize: 13, color: INK_SOFT }}>No requests raised yet.</div>}
                 {sorted.slice(0, 25).map((r) => {
@@ -1163,7 +1168,7 @@ function ProjectDashboard({ auth, onExit }) {
 
         {tab === "track" && (
           <div>
-            <div style={{ fontFamily: F_DISPLAY, fontSize: 17, marginBottom: 4 }}>Track requests</div>
+            <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 17, marginBottom: 4 }}>Track requests</div>
             <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 16 }}>Your project's requests only. Once material arrives at site, confirm receipt here.</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {sorted.length === 0 && <div style={{ fontSize: 13, color: INK_SOFT }}>Nothing raised yet.</div>}
@@ -1196,7 +1201,7 @@ function AdminGate({ pinInput, setPinInput, onUnlock, unlocking, title, descript
   return (
     <div style={{ maxWidth: 360, margin: "40px auto", background: PAPER_CARD, border: `1px solid ${RULE}`, borderRadius: 10, padding: 24, textAlign: "center" }}>
       <Lock size={26} color={INK_SOFT} style={{ marginBottom: 10 }} />
-      <div style={{ fontFamily: F_DISPLAY, fontSize: 17, marginBottom: 4 }}>{title || "Admin access required"}</div>
+      <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 17, marginBottom: 4 }}>{title || "Admin access required"}</div>
       <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 16 }}>{description || "Enter the admin PIN to continue."}</div>
       <input type="password" inputMode="numeric" placeholder="PIN" value={pinInput} onChange={(e) => setPinInput(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && onUnlock()}
@@ -1247,7 +1252,7 @@ function ReportsTab({ requests, companies }) {
 
   return (
     <div>
-      <div style={{ fontFamily: F_DISPLAY, fontSize: 17, marginBottom: 4 }}>Expense reports</div>
+      <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 17, marginBottom: 4 }}>Expense reports</div>
       <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 16 }}>Only priced/generated POs are counted — pending requests have no rate yet.</div>
 
       <div style={{ background: PAPER_CARD, border: `1px solid ${RULE}`, borderRadius: 10, padding: 16, marginBottom: 16 }}>
@@ -1340,7 +1345,7 @@ function RequestTab({ companies, vendors, draft, setDraft, updateDraftItem, addD
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr)", gap: 20 }}>
       <div style={{ background: PAPER_CARD, border: `1px solid ${RULE}`, borderRadius: 10, padding: 20 }}>
-        <div style={{ fontFamily: F_DISPLAY, fontSize: 17, marginBottom: 4 }}>New material request</div>
+        <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 17, marginBottom: 4 }}>New material request</div>
         <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 16 }}>Add what's needed at site. Rates and GST are filled by the PO admin — you don't need them.</div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
@@ -1429,7 +1434,7 @@ function RequestTab({ companies, vendors, draft, setDraft, updateDraftItem, addD
       </div>
 
       <div>
-        <div style={{ fontFamily: F_DISPLAY, fontSize: 15, marginBottom: 10 }}>Recent requests</div>
+        <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 15, marginBottom: 10 }}>Recent requests</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 640, overflowY: "auto" }}>
           {myRequests.length === 0 && <div style={{ fontSize: 13, color: INK_SOFT }}>No requests raised yet.</div>}
           {myRequests.slice(0, 25).map((r) => {
@@ -1456,7 +1461,7 @@ function TrackTab({ requests, companyOf, onMarkReceived, onDelete }) {
   const sorted = useMemo(() => [...requests].sort((a, b) => b.createdAt - a.createdAt), [requests]);
   return (
     <div>
-      <div style={{ fontFamily: F_DISPLAY, fontSize: 17, marginBottom: 4 }}>Track requests</div>
+      <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 17, marginBottom: 4 }}>Track requests</div>
       <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 16 }}>See where every request stands. Once material arrives at site, confirm receipt here to inform the PO admin — no need to call or message separately.</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {sorted.length === 0 && <div style={{ fontSize: 13, color: INK_SOFT }}>Nothing raised yet.</div>}
@@ -1502,7 +1507,7 @@ function AdminQueueTab({ pending, issued, companyOf, onOpen, onView, onDelete })
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
       <div>
-        <div style={{ fontFamily: F_DISPLAY, fontSize: 16, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 16, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
           <Clock size={16} color={BRASS} /> Awaiting pricing ({pending.length})
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1527,7 +1532,7 @@ function AdminQueueTab({ pending, issued, companyOf, onOpen, onView, onDelete })
       </div>
 
       <div>
-        <div style={{ fontFamily: F_DISPLAY, fontSize: 16, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 16, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
           <CheckCircle2 size={16} color={GREEN} /> Issued POs ({issued.length})
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 560, overflowY: "auto" }}>
@@ -1596,7 +1601,7 @@ function PricingEditor({ req, company, vendors, onBack, onChange, onGenerate, on
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
-          <div style={{ fontFamily: F_DISPLAY, fontSize: 18 }}>{company.name}</div>
+          <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 18 }}>{company.name}</div>
           <div style={{ fontSize: 12, color: INK_SOFT }}>Requested by {req.requestedBy || "—"} on {req.requestDate}</div>
         </div>
         <Stamp3 text={badge.text} color={badge.color} />
@@ -1651,7 +1656,7 @@ function PricingEditor({ req, company, vendors, onBack, onChange, onGenerate, on
                   <td style={{ padding: "8px 10px", textAlign: "right" }}>{it.unit}</td>
                   <td style={{ padding: "6px 8px", textAlign: "right" }}>
                     <input type="number" min="0" value={it.rate} onChange={(e) => { setItem(it.id, { rate: e.target.value }); setMissingIds((m) => m.filter((x) => x !== it.id)); }}
-                      style={{ width: 80, textAlign: "right", fontFamily: F_MONO, fontSize: 13, padding: "5px 7px", border: `1px solid ${missingIds.includes(it.id) ? "#A63D2F" : RULE}`, borderRadius: 5, background: missingIds.includes(it.id) ? "#FCEBEB" : "#fff" }} />
+                      style={{ width: 80, textAlign: "right", fontFamily: F_MONO, fontSize: 13, padding: "5px 7px", border: `1px solid ${missingIds.includes(it.id) ? STAMP_RED : RULE}`, borderRadius: 5, background: missingIds.includes(it.id) ? "#FCEBEB" : "#fff" }} />
                   </td>
                   <td style={{ padding: "6px 8px", textAlign: "right" }}>
                     <input type="number" min="0" value={it.gstPercent} onChange={(e) => setItem(it.id, { gstPercent: e.target.value })}
@@ -1732,7 +1737,7 @@ function VendorsTab({ vendors, onSave }) {
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-        <div style={{ fontFamily: F_DISPLAY, fontSize: 17 }}>Vendors / suppliers</div>
+        <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 17 }}>Vendors / suppliers</div>
         <Btn onClick={startAdd}><Plus size={14} />Add vendor</Btn>
       </div>
 
@@ -1860,7 +1865,7 @@ function CompaniesTab({ companies, requests, onSaveCompanies, settings, onChange
       </div>
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-        <div style={{ fontFamily: F_DISPLAY, fontSize: 17 }}>Companies / projects</div>
+        <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 17 }}>Companies / projects</div>
         <Btn onClick={startAdd}><Plus size={14} />Add company</Btn>
       </div>
 
@@ -2227,7 +2232,7 @@ function POPrint({ req, company, vendor, terms, authorities, onClose }) {
 
         <div className="po-print-area" ref={printAreaRef} style={{ padding: 28, fontFamily: F_BODY, color: "#111", fontSize: 13 }}>
           <div style={{ border: "2px solid #111" }}>
-            <div style={{ textAlign: "center", fontFamily: F_DISPLAY, fontSize: 22, padding: "12px 8px", borderBottom: "2px solid #111" }}>{company.name}</div>
+            <div style={{ textAlign: "center", fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 22, padding: "12px 8px", borderBottom: "2px solid #111" }}>{company.name}</div>
             <div style={{ textAlign: "center", fontWeight: 700, fontSize: 14, padding: "6px 8px", borderBottom: "2px solid #111", letterSpacing: "0.05em" }}>PURCHASE ORDER</div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", borderBottom: "1px solid #111" }}>
@@ -2242,7 +2247,7 @@ function POPrint({ req, company, vendor, terms, authorities, onClose }) {
                   </div>
                 )}
               </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontFamily: F_DISPLAY, fontSize: 18, textAlign: "center", padding: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 18, textAlign: "center", padding: 10 }}>
                 {company.name}
               </div>
             </div>
