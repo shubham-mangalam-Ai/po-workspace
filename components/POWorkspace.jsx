@@ -2065,7 +2065,7 @@ function generateRealPdf(req, company, vendor, terms, authorities) {
     head: [["Sr.", "Material Description", "Qty", "Unit", "Rate", "GST", "Amount"]],
     body: itemRows,
     theme: "grid",
-    styles: { fontSize: 9, cellPadding: 4, lineColor: [20, 20, 20], lineWidth: 0.5 },
+    styles: { fontSize: 9, cellPadding: 4, lineColor: [20, 20, 20], lineWidth: 0.5, textColor: [0, 0, 0] },
     headStyles: { fillColor: [27, 42, 74], textColor: 255, fontStyle: "bold" },
     columnStyles: { 0: { halign: "center", cellWidth: 28 }, 2: { halign: "right", cellWidth: 40 }, 3: { halign: "center", cellWidth: 40 }, 4: { halign: "right", cellWidth: 60 }, 5: { halign: "right", cellWidth: 55 }, 6: { halign: "right", cellWidth: 65 } },
   });
@@ -2088,7 +2088,7 @@ function generateRealPdf(req, company, vendor, terms, authorities) {
     tableWidth: 220,
     body: totalsRows,
     theme: "grid",
-    styles: { fontSize: 9.5, cellPadding: 5, lineColor: [20, 20, 20], lineWidth: 0.5 },
+    styles: { fontSize: 9.5, cellPadding: 5, lineColor: [20, 20, 20], lineWidth: 0.5, textColor: [0, 0, 0] },
     columnStyles: { 1: { halign: "right" } },
     didParseCell: (data) => { if (data.row.index === totalsRows.length - 1) data.cell.styles.fontStyle = "bold"; },
   });
