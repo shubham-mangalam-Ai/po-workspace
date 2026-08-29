@@ -34,8 +34,8 @@ const F_BODY = "'Inter', system-ui, sans-serif";
 
 const UNIT_OPTIONS = ["pkt", "nos", "pcs", "box", "set", "kg", "ltr", "mtr", "roll", "other"];
 
-const MATERIAL_CATEGORIES = ["Stationery", "Housekeeping", "Pantry", "Promotional Materials", "Uniform", "T-Shirts", "Induction Kit"];
-const OFFICE_OPTIONS = ["Site Office", "Sales Office", "Head Office"];
+const DEFAULT_MATERIAL_CATEGORIES = ["Stationery", "Housekeeping", "Pantry", "Promotional Materials", "Uniform", "T-Shirts", "Induction Kit"];
+const DEFAULT_OFFICE_OPTIONS = ["Site Office", "Sales Office", "Head Office"];
 
 function deriveCategoryLabel(materialCategory, office) {
   if (materialCategory && office) return `${materialCategory} — ${office}`;
@@ -227,6 +227,8 @@ async function fetchAllData() {
       terms: s && s.terms && s.terms.length ? s.terms : DEFAULT_TERMS,
       quickItems: s && s.quickItems && s.quickItems.length ? s.quickItems : DEFAULT_QUICK_ITEMS,
       authorities: s && s.authorities && s.authorities.length ? s.authorities : DEFAULT_AUTHORITIES,
+      materialCategories: s && s.materialCategories && s.materialCategories.length ? s.materialCategories : DEFAULT_MATERIAL_CATEGORIES,
+      officeOptions: s && s.officeOptions && s.officeOptions.length ? s.officeOptions : DEFAULT_OFFICE_OPTIONS,
     },
   };
 }
@@ -377,7 +379,7 @@ function AdminApp({ initialScope, initialPinValue, onExit }) {
   const [companies, setCompanies] = useState(DEFAULT_COMPANIES);
   const [vendors, setVendors] = useState(DEFAULT_VENDORS);
   const [requests, setRequests] = useState([]);
-  const [settings, setSettings] = useState({ terms: DEFAULT_TERMS, quickItems: DEFAULT_QUICK_ITEMS, authorities: DEFAULT_AUTHORITIES });
+  const [settings, setSettings] = useState({ terms: DEFAULT_TERMS, quickItems: DEFAULT_QUICK_ITEMS, authorities: DEFAULT_AUTHORITIES, materialCategories: DEFAULT_MATERIAL_CATEGORIES, officeOptions: DEFAULT_OFFICE_OPTIONS });
   const [tab, setTab] = useState("request");
   const [draft, setDraft] = useState(() => newRequest(DEFAULT_COMPANIES[0].id, DEFAULT_VENDORS[0].id, DEFAULT_COMPANIES[0]));
   const [selectedId, setSelectedId] = useState(null);
@@ -647,6 +649,7 @@ function AdminApp({ initialScope, initialPinValue, onExit }) {
             companies={companies} vendors={vendors} draft={draft} setDraft={setDraft}
             updateDraftItem={updateDraftItem} addDraftItem={addDraftItem} removeDraftItem={removeDraftItem}
             submitRequest={submitRequest} quickItems={settings.quickItems}
+            materialCategories={settings.materialCategories} officeOptions={settings.officeOptions}
             newCompanyOpen={newCompanyOpen} setNewCompanyOpen={setNewCompanyOpen}
             newCompany={newCompany} setNewCompany={setNewCompany} addCompany={addCompany}
             myRequests={requests}
@@ -681,7 +684,7 @@ function AdminApp({ initialScope, initialPinValue, onExit }) {
           <AdminGate pinInput={pinInput} setPinInput={setPinInput} onUnlock={() => tryUnlock("process")} unlocking={unlocking}
             title="Reports access" description="Reports share the Process POs PIN, since they show pricing across every company." />
         )}
-        {tab === "reports" && processUnlocked && <ReportsTab requests={requests} companies={companies} />}
+        {tab === "reports" && processUnlocked && <ReportsTab requests={requests} companies={companies} materialCategories={settings.materialCategories} officeOptions={settings.officeOptions} />}
 
         {tab === "vendors" && !processUnlocked && (
           <AdminGate pinInput={pinInput} setPinInput={setPinInput} onUnlock={() => tryUnlock("process")} unlocking={unlocking}
@@ -706,6 +709,8 @@ function AdminApp({ initialScope, initialPinValue, onExit }) {
             onChangeTerms={(terms) => persistSettings({ terms })}
             onChangeQuickItems={(quickItems) => persistSettings({ quickItems })}
             onChangeAuthorities={(authorities) => persistSettings({ authorities })}
+            onChangeMaterialCategories={(materialCategories) => persistSettings({ materialCategories })}
+            onChangeOfficeOptions={(officeOptions) => persistSettings({ officeOptions })}
           />
         )}
       </div>
@@ -927,7 +932,10 @@ function ProjectDashboard({ auth, onExit }) {
   const [company, setCompany] = useState(null);
   const [requests, setRequests] = useState([]);
   const [quickItems, setQuickItems] = useState(DEFAULT_QUICK_ITEMS);
+  const [materialCategories, setMaterialCategories] = useState(DEFAULT_MATERIAL_CATEGORIES);
+  const [officeOptions, setOfficeOptions] = useState(DEFAULT_OFFICE_OPTIONS);
   const [tab, setTab] = useState("request");
+  const [expandedId, setExpandedId] = useState(null);
   const [toast, setToast] = useState("");
   const [manualRefreshing, setManualRefreshing] = useState(false);
 
@@ -953,6 +961,8 @@ function ProjectDashboard({ auth, onExit }) {
       setCompany(data.company);
       setRequests(data.requests || []);
       setQuickItems(data.quickItems && data.quickItems.length ? data.quickItems : DEFAULT_QUICK_ITEMS);
+      setMaterialCategories(data.materialCategories && data.materialCategories.length ? data.materialCategories : DEFAULT_MATERIAL_CATEGORIES);
+      setOfficeOptions(data.officeOptions && data.officeOptions.length ? data.officeOptions : DEFAULT_OFFICE_OPTIONS);
       // Seed the editable site fields from the company's defaults, but only
       // once -- later refreshes/polls must not overwrite what the person is
       // actively typing.
@@ -1114,10 +1124,10 @@ function ProjectDashboard({ auth, onExit }) {
                 <LabeledInput label="Delivery / site address" placeholder="Where should this be delivered?" value={siteAddress} onChange={(e) => setSiteAddress(e.target.value)} />
               </div>
               <div style={{ marginBottom: 16 }}>
-                <LabeledSelect label="Material category" value={materialCategory} onChange={(e) => setMaterialCategory(e.target.value)} options={MATERIAL_CATEGORIES} placeholder="Select category" />
+                <LabeledSelect label="Material category" value={materialCategory} onChange={(e) => setMaterialCategory(e.target.value)} options={materialCategories} placeholder="Select category" />
               </div>
               <div style={{ marginBottom: 16 }}>
-                <LabeledSelect label="Office" value={office} onChange={(e) => setOffice(e.target.value)} options={OFFICE_OPTIONS} placeholder="Select office" />
+                <LabeledSelect label="Office" value={office} onChange={(e) => setOffice(e.target.value)} options={officeOptions} placeholder="Select office" />
               </div>
 
               <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Quick add</div>
@@ -1180,23 +1190,46 @@ function ProjectDashboard({ auth, onExit }) {
         {tab === "track" && (
           <div>
             <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 17, marginBottom: 4 }}>Track requests</div>
-            <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 16 }}>Your project's requests only. Once material arrives at site, confirm receipt here.</div>
+            <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 16 }}>Your project's requests only. Click a request to see its materials. Once material arrives at site, confirm receipt here.</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {sorted.length === 0 && <div style={{ fontSize: 13, color: INK_SOFT }}>Nothing raised yet.</div>}
               {sorted.map((r) => {
                 const b = statusBadge(r);
+                const isExpanded = expandedId === r.id;
                 return (
-                  <div key={r.id} style={{ background: "#fff", border: `1px solid ${RULE}`, borderRadius: 8, padding: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 600 }}>{r.category || "Material request"}</div>
-                      <div style={{ fontSize: 12, color: INK_SOFT, marginTop: 2 }}>{r.items.length} item{r.items.length !== 1 ? "s" : ""} &middot; by {r.requestedBy || "—"}</div>
-                      {r.status === "received" && <div style={{ fontSize: 11, color: TEAL, marginTop: 3 }}>Confirmed by {r.materialReceivedBy || "—"}</div>}
+                  <div key={r.id} onClick={() => setExpandedId((id) => (id === r.id ? null : r.id))}
+                    style={{ background: "#fff", border: `1px solid ${RULE}`, borderRadius: 8, padding: 14, cursor: "pointer" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <ChevronRight size={16} color={INK_SOFT} style={{ transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
+                        <div>
+                          <div style={{ fontSize: 14, fontWeight: 600 }}>{r.category || "Material request"}</div>
+                          <div style={{ fontSize: 12, color: INK_SOFT, marginTop: 2 }}>{r.items.length} item{r.items.length !== 1 ? "s" : ""} &middot; by {r.requestedBy || "—"}</div>
+                          {r.status === "received" && <div style={{ fontSize: 11, color: TEAL, marginTop: 3 }}>Confirmed by {r.materialReceivedBy || "—"}</div>}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={(e) => e.stopPropagation()}>
+                        <Stamp3 text={b.text} color={b.color} />
+                        {r.status === "pending" && <ConfirmDelete onConfirm={() => cancelRequest(r.id)} label="Cancel this request" />}
+                        {r.status === "generated" && <ReceivedButton onConfirm={(name) => markReceived(r.id, name)} />}
+                      </div>
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <Stamp3 text={b.text} color={b.color} />
-                      {r.status === "pending" && <ConfirmDelete onConfirm={() => cancelRequest(r.id)} label="Cancel this request" />}
-                      {r.status === "generated" && <ReceivedButton onConfirm={(name) => markReceived(r.id, name)} />}
-                    </div>
+                    {isExpanded && (
+                      <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${RULE}` }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Materials requested</div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          {r.items.map((it, idx) => (
+                            <div key={it.id || idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "4px 0" }}>
+                              <span>{idx + 1}. {it.description}</span>
+                              <span style={{ color: INK_SOFT, fontFamily: F_MONO }}>{it.qty} {it.unit}</span>
+                            </div>
+                          ))}
+                        </div>
+                        {r.poNo && (
+                          <div style={{ fontSize: 11, color: INK_SOFT, marginTop: 8, fontFamily: F_MONO }}>PO {r.poNo} &middot; {r.poDate}</div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1226,7 +1259,7 @@ function AdminGate({ pinInput, setPinInput, onUnlock, unlocking, title, descript
 // office / date range, see total spend across matching POs. Only requests
 // that are "generated" or "received" carry real pricing (pending ones
 // have no rate yet), so those are the only ones counted here.
-function ReportsTab({ requests, companies }) {
+function ReportsTab({ requests, companies, materialCategories, officeOptions }) {
   const [filterCompanyId, setFilterCompanyId] = useState("");
   const [filterMaterialCategory, setFilterMaterialCategory] = useState("");
   const [filterOffice, setFilterOffice] = useState("");
@@ -1279,14 +1312,14 @@ function ReportsTab({ requests, companies }) {
             <span style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em" }}>Category</span>
             <select value={filterMaterialCategory} onChange={(e) => setFilterMaterialCategory(e.target.value)} style={{ fontSize: 13, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6, background: "#fff" }}>
               <option value="">All categories</option>
-              {MATERIAL_CATEGORIES.map((m) => <option key={m} value={m}>{m}</option>)}
+              {(materialCategories && materialCategories.length ? materialCategories : DEFAULT_MATERIAL_CATEGORIES).map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
           </label>
           <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <span style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em" }}>Office</span>
             <select value={filterOffice} onChange={(e) => setFilterOffice(e.target.value)} style={{ fontSize: 13, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6, background: "#fff" }}>
               <option value="">All offices</option>
-              {OFFICE_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+              {(officeOptions && officeOptions.length ? officeOptions : DEFAULT_OFFICE_OPTIONS).map((o) => <option key={o} value={o}>{o}</option>)}
             </select>
           </label>
           <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -1342,7 +1375,7 @@ function ReportsTab({ requests, companies }) {
   );
 }
 
-function RequestTab({ companies, vendors, draft, setDraft, updateDraftItem, addDraftItem, removeDraftItem, submitRequest, quickItems, newCompanyOpen, setNewCompanyOpen, newCompany, setNewCompany, addCompany, myRequests }) {
+function RequestTab({ companies, vendors, draft, setDraft, updateDraftItem, addDraftItem, removeDraftItem, submitRequest, quickItems, materialCategories, officeOptions, newCompanyOpen, setNewCompanyOpen, newCompany, setNewCompany, addCompany, myRequests }) {
   const vendor = vendors.find((v) => v.id === draft.vendorId) || vendors[0];
   function selectCompany(companyId) {
     const comp = companies.find((c) => c.id === companyId);
@@ -1406,8 +1439,8 @@ function RequestTab({ companies, vendors, draft, setDraft, updateDraftItem, addD
           <LabeledInput label="Delivery / site address" placeholder="e.g. Mangalam Miraya, Gat no.286, Near Bharat Mata Chowk..." value={draft.siteAddress} onChange={(e) => setDraft((d) => ({ ...d, siteAddress: e.target.value }))} />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-          <LabeledSelect label="Material category" value={draft.materialCategory} onChange={(e) => setDraft((d) => ({ ...d, materialCategory: e.target.value }))} options={MATERIAL_CATEGORIES} placeholder="Select category" />
-          <LabeledSelect label="Office" value={draft.office} onChange={(e) => setDraft((d) => ({ ...d, office: e.target.value }))} options={OFFICE_OPTIONS} placeholder="Select office" />
+          <LabeledSelect label="Material category" value={draft.materialCategory} onChange={(e) => setDraft((d) => ({ ...d, materialCategory: e.target.value }))} options={materialCategories && materialCategories.length ? materialCategories : DEFAULT_MATERIAL_CATEGORIES} placeholder="Select category" />
+          <LabeledSelect label="Office" value={draft.office} onChange={(e) => setDraft((d) => ({ ...d, office: e.target.value }))} options={officeOptions && officeOptions.length ? officeOptions : DEFAULT_OFFICE_OPTIONS} placeholder="Select office" />
         </div>
 
         <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Quick add</div>
@@ -1470,27 +1503,51 @@ function RequestTab({ companies, vendors, draft, setDraft, updateDraftItem, addD
 
 function TrackTab({ requests, companyOf, onMarkReceived, onDelete }) {
   const sorted = useMemo(() => [...requests].sort((a, b) => b.createdAt - a.createdAt), [requests]);
+  const [expandedId, setExpandedId] = useState(null);
   return (
     <div>
       <div style={{ fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 17, marginBottom: 4 }}>Track requests</div>
-      <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 16 }}>See where every request stands. Once material arrives at site, confirm receipt here to inform the PO admin — no need to call or message separately.</div>
+      <div style={{ fontSize: 12, color: INK_SOFT, marginBottom: 16 }}>Click a request to see its materials. Once material arrives at site, confirm receipt here to inform the PO admin — no need to call or message separately.</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {sorted.length === 0 && <div style={{ fontSize: 13, color: INK_SOFT }}>Nothing raised yet.</div>}
         {sorted.map((r) => {
           const b = statusBadge(r);
           const c = companyOf(r.companyId);
+          const isExpanded = expandedId === r.id;
           return (
-            <div key={r.id} style={{ background: "#fff", border: `1px solid ${RULE}`, borderRadius: 8, padding: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600 }}>{c?.name}</div>
-                <div style={{ fontSize: 12, color: INK_SOFT, marginTop: 2 }}>{r.category || "Material request"} &middot; {r.items.length} item{r.items.length !== 1 ? "s" : ""} &middot; by {r.requestedBy || "—"}</div>
-                {r.status === "received" && <div style={{ fontSize: 11, color: TEAL, marginTop: 3 }}>Confirmed by {r.materialReceivedBy || "—"}</div>}
+            <div key={r.id} onClick={() => setExpandedId((id) => (id === r.id ? null : r.id))}
+              style={{ background: "#fff", border: `1px solid ${RULE}`, borderRadius: 8, padding: 14, cursor: "pointer" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <ChevronRight size={16} color={INK_SOFT} style={{ transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{c?.name}</div>
+                    <div style={{ fontSize: 12, color: INK_SOFT, marginTop: 2 }}>{r.category || "Material request"} &middot; {r.items.length} item{r.items.length !== 1 ? "s" : ""} &middot; by {r.requestedBy || "—"}</div>
+                    {r.status === "received" && <div style={{ fontSize: 11, color: TEAL, marginTop: 3 }}>Confirmed by {r.materialReceivedBy || "—"}</div>}
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={(e) => e.stopPropagation()}>
+                  <Stamp3 text={b.text} color={b.color} />
+                  {r.status === "pending" && <ConfirmDelete onConfirm={() => onDelete(r.id)} label="Cancel this request" />}
+                  {r.status === "generated" && <ReceivedButton onConfirm={(name) => onMarkReceived(r.id, name)} />}
+                </div>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <Stamp3 text={b.text} color={b.color} />
-                {r.status === "pending" && <ConfirmDelete onConfirm={() => onDelete(r.id)} label="Cancel this request" />}
-                {r.status === "generated" && <ReceivedButton onConfirm={(name) => onMarkReceived(r.id, name)} />}
-              </div>
+              {isExpanded && (
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${RULE}` }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Materials requested</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {r.items.map((it, idx) => (
+                      <div key={it.id || idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "4px 0" }}>
+                        <span>{idx + 1}. {it.description}</span>
+                        <span style={{ color: INK_SOFT, fontFamily: F_MONO }}>{it.qty} {it.unit}{it.rate !== "" && !isNaN(Number(it.rate)) ? ` · ${rupee(Number(it.rate))}/unit` : ""}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {r.poNo && (
+                    <div style={{ fontSize: 11, color: INK_SOFT, marginTop: 8, fontFamily: F_MONO }}>PO {r.poNo} &middot; {r.poDate}</div>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}
@@ -1807,12 +1864,14 @@ function VendorsTab({ vendors, onSave }) {
   );
 }
 
-function CompaniesTab({ companies, requests, onSaveCompanies, settings, onChangeCompanyPin, onChangeProcessPin, onChangeTerms, onChangeQuickItems, onChangeAuthorities }) {
+function CompaniesTab({ companies, requests, onSaveCompanies, settings, onChangeCompanyPin, onChangeProcessPin, onChangeTerms, onChangeQuickItems, onChangeAuthorities, onChangeMaterialCategories, onChangeOfficeOptions }) {
   const [companyPinInput, setCompanyPinInput] = useState("");
   const [processPinInput, setProcessPinInput] = useState("");
   const [termsText, setTermsText] = useState((settings.terms || DEFAULT_TERMS).join("\n"));
   const [quickText, setQuickText] = useState((settings.quickItems || DEFAULT_QUICK_ITEMS).join("\n"));
   const [authText, setAuthText] = useState((settings.authorities || DEFAULT_AUTHORITIES).join("\n"));
+  const [categoriesText, setCategoriesText] = useState((settings.materialCategories || DEFAULT_MATERIAL_CATEGORIES).join("\n"));
+  const [officesText, setOfficesText] = useState((settings.officeOptions || DEFAULT_OFFICE_OPTIONS).join("\n"));
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -1864,6 +1923,24 @@ function CompaniesTab({ companies, requests, onSaveCompanies, settings, onChange
             style={{ width: "100%", boxSizing: "border-box", fontFamily: F_BODY, fontSize: 12.5, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6, marginBottom: 8, resize: "vertical" }} />
           <Btn variant="primary" onClick={() => onChangeAuthorities(authText.split("\n").map((t) => t.trim()).filter(Boolean))}><Check size={14} />Save</Btn>
           <div style={{ fontSize: 11, color: INK_SOFT, marginTop: 6 }}>Printed as the signature columns at the bottom of every PO.</div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+        <div style={{ background: "#fff", border: `1px solid ${RULE}`, borderRadius: 8, padding: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Material categories (one per line, add or remove)</div>
+          <textarea value={categoriesText} onChange={(e) => setCategoriesText(e.target.value)} rows={5}
+            style={{ width: "100%", boxSizing: "border-box", fontFamily: F_BODY, fontSize: 12.5, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6, marginBottom: 8, resize: "vertical" }} />
+          <Btn variant="primary" onClick={() => onChangeMaterialCategories(categoriesText.split("\n").map((t) => t.trim()).filter(Boolean))}><Check size={14} />Save</Btn>
+          <div style={{ fontSize: 11, color: INK_SOFT, marginTop: 6 }}>These are the "Material category" dropdown options everyone sees when raising a request.</div>
+        </div>
+
+        <div style={{ background: "#fff", border: `1px solid ${RULE}`, borderRadius: 8, padding: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Offices (one per line, add or remove)</div>
+          <textarea value={officesText} onChange={(e) => setOfficesText(e.target.value)} rows={5}
+            style={{ width: "100%", boxSizing: "border-box", fontFamily: F_BODY, fontSize: 12.5, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6, marginBottom: 8, resize: "vertical" }} />
+          <Btn variant="primary" onClick={() => onChangeOfficeOptions(officesText.split("\n").map((t) => t.trim()).filter(Boolean))}><Check size={14} />Save</Btn>
+          <div style={{ fontSize: 11, color: INK_SOFT, marginTop: 6 }}>These are the "Office" dropdown options everyone sees when raising a request.</div>
         </div>
       </div>
 
