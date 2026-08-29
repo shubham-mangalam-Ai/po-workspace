@@ -41,6 +41,8 @@ export async function POST(request) {
       },
       requests,
       quickItems: Array.isArray(settingsValue.quickItems) ? settingsValue.quickItems : [],
+      materialCategories: Array.isArray(settingsValue.materialCategories) ? settingsValue.materialCategories : [],
+      officeOptions: Array.isArray(settingsValue.officeOptions) ? settingsValue.officeOptions : [],
     });
   } catch (err) {
     console.error("project list failed:", err);
