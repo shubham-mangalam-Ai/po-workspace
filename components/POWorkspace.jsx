@@ -251,7 +251,18 @@ function computeTotals(items, transportNote) {
   const transportNum = Number(transportNote);
   const transportExtra = transportNote !== "" && !isNaN(transportNum) ? transportNum : 0;
   const grand = taxable + gst + transportExtra;
-  return { taxable, gst, sgst, cgst, transportExtra, grand };
+  // Blended GST rate actually reflected by the items on this PO (they can
+  // each carry a different gstPercent), not a hardcoded assumption. SGST
+  // and CGST are each half of this. Falls back to 0 when there's no
+  // taxable amount yet (e.g. rates not entered).
+  const effectiveGstPercent = taxable > 0 ? (gst / taxable) * 100 : 0;
+  return { taxable, gst, sgst, cgst, transportExtra, grand, effectiveGstPercent };
+}
+// Formats a percentage for display: whole numbers show as "18%", anything
+// with a fraction shows one decimal place, e.g. "6.5%".
+function formatPct(n) {
+  const v = Math.round((Number(n) || 0) * 10) / 10;
+  return (Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1)) + "%";
 }
 function statusBadge(req) {
   if (req.status === "received") return { text: `Received \u2713`, color: TEAL };
@@ -1680,8 +1691,8 @@ function PricingEditor({ req, company, vendors, onBack, onChange, onGenerate, on
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", rowGap: 8, fontSize: 13 }}>
           <div style={{ color: INK_SOFT }}>Taxable amount</div><div style={{ textAlign: "right", fontFamily: F_MONO }}>{rupee(totals.taxable)}</div>
           <div style={{ color: INK_SOFT }}>Total GST</div><div style={{ textAlign: "right", fontFamily: F_MONO }}>{rupee(totals.gst)}</div>
-          <div style={{ color: INK_SOFT }}>&nbsp;&nbsp;SGST @ 9%</div><div style={{ textAlign: "right", fontFamily: F_MONO, color: INK_SOFT }}>{rupee(totals.sgst)}</div>
-          <div style={{ color: INK_SOFT }}>&nbsp;&nbsp;CGST @ 9%</div><div style={{ textAlign: "right", fontFamily: F_MONO, color: INK_SOFT }}>{rupee(totals.cgst)}</div>
+          <div style={{ color: INK_SOFT }}>&nbsp;&nbsp;SGST @ {formatPct(totals.effectiveGstPercent / 2)}</div><div style={{ textAlign: "right", fontFamily: F_MONO, color: INK_SOFT }}>{rupee(totals.sgst)}</div>
+          <div style={{ color: INK_SOFT }}>&nbsp;&nbsp;CGST @ {formatPct(totals.effectiveGstPercent / 2)}</div><div style={{ textAlign: "right", fontFamily: F_MONO, color: INK_SOFT }}>{rupee(totals.cgst)}</div>
           {totals.transportExtra > 0 && (<><div style={{ color: INK_SOFT }}>Transport & installation</div><div style={{ textAlign: "right", fontFamily: F_MONO }}>{rupee(totals.transportExtra)}</div></>)}
           <div style={{ fontWeight: 700, borderTop: `1px solid ${RULE}`, paddingTop: 8 }}>Grand total</div>
           <div style={{ fontWeight: 700, borderTop: `1px solid ${RULE}`, paddingTop: 8, textAlign: "right", fontFamily: F_MONO, fontSize: 16 }}>{rupee(totals.grand)}</div>
@@ -1972,8 +1983,8 @@ function downloadExcel(req, company, vendor, terms) {
   rows.push([]);
   rows.push(["", "", "", "", "", "Taxable Amount", Math.round(totals.taxable)]);
   rows.push(["", "", "", "", "", "Total GST", Math.round(totals.gst)]);
-  rows.push(["", "", "", "", "", "SGST @ 9%", Math.round(totals.sgst)]);
-  rows.push(["", "", "", "", "", "CGST @ 9%", Math.round(totals.cgst)]);
+  rows.push(["", "", "", "", "", `SGST @ ${formatPct(totals.effectiveGstPercent / 2)}`, Math.round(totals.sgst)]);
+  rows.push(["", "", "", "", "", `CGST @ ${formatPct(totals.effectiveGstPercent / 2)}`, Math.round(totals.cgst)]);
   rows.push(["", "", "", "", "", "Transport & Installation", req.transportNote]);
   rows.push(["", "", "", "", "", "Grand Total", Math.round(totals.grand)]);
   rows.push([]);
@@ -2080,8 +2091,8 @@ function generateRealPdf(req, company, vendor, terms, authorities) {
   const totalsRows = [
     ["Taxable Amount", rupeePdf(totals.taxable)],
     ["Total GST", rupeePdf(totals.gst)],
-    ["SGST @ 9%", rupeePdf(totals.sgst)],
-    ["CGST @ 9%", rupeePdf(totals.cgst)],
+    [`SGST @ ${formatPct(totals.effectiveGstPercent / 2)}`, rupeePdf(totals.sgst)],
+    [`CGST @ ${formatPct(totals.effectiveGstPercent / 2)}`, rupeePdf(totals.cgst)],
   ];
   if (totals.transportExtra > 0) totalsRows.push(["Transport & Installation", rupeePdf(totals.transportExtra)]);
   else totalsRows.push(["Transport & Installation", String(req.transportNote || "Including")]);
@@ -2321,11 +2332,11 @@ function POPrint({ req, company, vendor, terms, authorities, onClose }) {
                   <td style={{ border: "1px solid #111", padding: "6px 8px", textAlign: "right" }}>{Math.round(totals.gst)}</td>
                 </tr>
                 <tr>
-                  <td style={{ border: "1px solid #111", padding: "6px 8px" }}>&nbsp;&nbsp;SGST @ 9%</td>
+                  <td style={{ border: "1px solid #111", padding: "6px 8px" }}>&nbsp;&nbsp;SGST @ {formatPct(totals.effectiveGstPercent / 2)}</td>
                   <td style={{ border: "1px solid #111", padding: "6px 8px", textAlign: "right" }}>{Math.round(totals.sgst)}</td>
                 </tr>
                 <tr>
-                  <td style={{ border: "1px solid #111", padding: "6px 8px" }}>&nbsp;&nbsp;CGST @ 9%</td>
+                  <td style={{ border: "1px solid #111", padding: "6px 8px" }}>&nbsp;&nbsp;CGST @ {formatPct(totals.effectiveGstPercent / 2)}</td>
                   <td style={{ border: "1px solid #111", padding: "6px 8px", textAlign: "right" }}>{Math.round(totals.cgst)}</td>
                 </tr>
                 {totals.transportExtra > 0 && (
