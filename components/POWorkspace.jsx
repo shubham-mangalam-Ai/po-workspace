@@ -112,6 +112,13 @@ const DEFAULT_PIN = "2026";
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
+// Blurs a number input the instant the mouse wheel touches it. Hiding the
+// spinner arrows via CSS alone doesn't stop Chrome/Firefox from silently
+// incrementing/decrementing a focused number input while someone scrolls
+// the page -- this is the actual fix for that.
+function preventWheelChange(e) {
+  e.target.blur();
+}
 function todayStr() {
   const d = new Date();
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
@@ -936,6 +943,8 @@ function ProjectDashboard({ auth, onExit }) {
   const [officeOptions, setOfficeOptions] = useState(DEFAULT_OFFICE_OPTIONS);
   const [tab, setTab] = useState("request");
   const [expandedId, setExpandedId] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [editItems, setEditItems] = useState([]);
   const [toast, setToast] = useState("");
   const [manualRefreshing, setManualRefreshing] = useState(false);
 
@@ -1047,6 +1056,16 @@ function ProjectDashboard({ auth, onExit }) {
     load(false);
   }
 
+  async function updateRequestItems(id, items) {
+    const cleanItems = items.filter((it) => it.description.trim());
+    if (!cleanItems.length) return flash("Add at least one material line.");
+    const res = await projectAction(companyId, pin, "update", { requestId: id, items: cleanItems });
+    if (!res.ok) return flash(res.error || "Could not save changes.");
+    flash("Request updated.");
+    setEditingId(null);
+    load(false);
+  }
+
   async function markReceived(id, byName) {
     const res = await projectAction(companyId, pin, "markReceived", { requestId: id, byName });
     if (!res.ok) return flash(res.error || "Could not confirm receipt.");
@@ -1146,7 +1165,7 @@ function ProjectDashboard({ auth, onExit }) {
                     <div style={{ fontFamily: F_MONO, fontSize: 12, color: INK_SOFT, textAlign: "center" }}>{idx + 1}</div>
                     <input placeholder="Material description" value={it.description} onChange={(e) => updateItem(it.id, { description: e.target.value })}
                       style={{ fontFamily: F_BODY, fontSize: 13, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6 }} />
-                    <input type="number" min="0" placeholder="Qty" value={it.qty} onChange={(e) => updateItem(it.id, { qty: e.target.value })}
+                    <input type="number" min="0" onWheel={preventWheelChange} placeholder="Qty" value={it.qty} onChange={(e) => updateItem(it.id, { qty: e.target.value })}
                       style={{ fontFamily: F_MONO, fontSize: 13, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6 }} />
                     <select value={it.unit} onChange={(e) => updateItem(it.id, { unit: e.target.value })} style={{ fontFamily: F_BODY, fontSize: 13, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6 }}>
                       {UNIT_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
@@ -1215,16 +1234,55 @@ function ProjectDashboard({ auth, onExit }) {
                       </div>
                     </div>
                     {isExpanded && (
-                      <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${RULE}` }}>
-                        <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Materials requested</div>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                          {r.items.map((it, idx) => (
-                            <div key={it.id || idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "4px 0" }}>
-                              <span>{idx + 1}. {it.description}</span>
-                              <span style={{ color: INK_SOFT, fontFamily: F_MONO }}>{it.qty} {it.unit}</span>
-                            </div>
-                          ))}
+                      <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${RULE}` }} onClick={(e) => e.stopPropagation()}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: INK_SOFT, textTransform: "uppercase", letterSpacing: "0.04em" }}>Materials requested</div>
+                          {r.status === "pending" && editingId !== r.id && (
+                            <button onClick={() => { setEditingId(r.id); setEditItems(r.items.map((it) => ({ ...it }))); }}
+                              style={{ fontSize: 11, background: "transparent", border: "none", color: STAMP_RED, cursor: "pointer", textDecoration: "underline", fontWeight: 600 }}>
+                              Edit
+                            </button>
+                          )}
                         </div>
+
+                        {editingId === r.id ? (
+                          <div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+                              {editItems.map((it, idx) => (
+                                <div key={it.id || idx} style={{ display: "grid", gridTemplateColumns: "20px 1fr 60px 80px 28px", gap: 6, alignItems: "center" }}>
+                                  <div style={{ fontFamily: F_MONO, fontSize: 11, color: INK_SOFT, textAlign: "center" }}>{idx + 1}</div>
+                                  <input value={it.description} onChange={(e) => setEditItems((its) => its.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))}
+                                    style={{ fontSize: 13, padding: "6px 8px", border: `1px solid ${RULE}`, borderRadius: 5 }} />
+                                  <input type="number" min="0" onWheel={preventWheelChange} value={it.qty} onChange={(e) => setEditItems((its) => its.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))}
+                                    style={{ fontFamily: F_MONO, fontSize: 13, padding: "6px 8px", border: `1px solid ${RULE}`, borderRadius: 5 }} />
+                                  <select value={it.unit} onChange={(e) => setEditItems((its) => its.map((x, i) => (i === idx ? { ...x, unit: e.target.value } : x)))}
+                                    style={{ fontSize: 13, padding: "6px 4px", border: `1px solid ${RULE}`, borderRadius: 5 }}>
+                                    {UNIT_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
+                                  </select>
+                                  <button onClick={() => setEditItems((its) => (its.length > 1 ? its.filter((_, i) => i !== idx) : its))}
+                                    style={{ border: "none", background: "transparent", cursor: "pointer", color: "#9B2C2C" }} aria-label="Remove line">
+                                    <Trash2 size={15} />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                              <Btn onClick={() => setEditItems((its) => [...its, { ...blankItem() }])}><Plus size={13} />Add line</Btn>
+                              <Btn variant="stamp" onClick={() => updateRequestItems(r.id, editItems)}><Check size={13} />Save changes</Btn>
+                              <Btn variant="ghost" onClick={() => setEditingId(null)}>Cancel</Btn>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                            {r.items.map((it, idx) => (
+                              <div key={it.id || idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "4px 0" }}>
+                                <span>{idx + 1}. {it.description}</span>
+                                <span style={{ color: INK_SOFT, fontFamily: F_MONO }}>{it.qty} {it.unit}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
                         {r.poNo && (
                           <div style={{ fontSize: 11, color: INK_SOFT, marginTop: 8, fontFamily: F_MONO }}>PO {r.poNo} &middot; {r.poDate}</div>
                         )}
@@ -1459,7 +1517,7 @@ function RequestTab({ companies, vendors, draft, setDraft, updateDraftItem, addD
               <div style={{ fontFamily: F_MONO, fontSize: 12, color: INK_SOFT, textAlign: "center" }}>{idx + 1}</div>
               <input placeholder="Material description" value={it.description} onChange={(e) => updateDraftItem(it.id, { description: e.target.value })}
                 style={{ fontFamily: F_BODY, fontSize: 13, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6 }} />
-              <input type="number" min="0" placeholder="Qty" value={it.qty} onChange={(e) => updateDraftItem(it.id, { qty: e.target.value })}
+              <input type="number" min="0" onWheel={preventWheelChange} placeholder="Qty" value={it.qty} onChange={(e) => updateDraftItem(it.id, { qty: e.target.value })}
                 style={{ fontFamily: F_MONO, fontSize: 13, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6 }} />
               <select value={it.unit} onChange={(e) => updateDraftItem(it.id, { unit: e.target.value })} style={{ fontFamily: F_BODY, fontSize: 13, padding: "7px 9px", border: `1px solid ${RULE}`, borderRadius: 6 }}>
                 {UNIT_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
@@ -1716,18 +1774,26 @@ function PricingEditor({ req, company, vendors, onBack, onChange, onGenerate, on
               return (
                 <tr key={it.id} style={{ borderBottom: `1px solid ${RULE}`, background: "#fff" }}>
                   <td style={{ padding: "8px 10px", textAlign: "center", fontFamily: F_MONO }}>{idx + 1}</td>
-                  <td style={{ padding: "8px 10px" }}>{it.description}</td>
+                  <td style={{ padding: "6px 8px" }}>
+                    <input value={it.description} onChange={(e) => setItem(it.id, { description: e.target.value })}
+                      style={{ width: "100%", fontFamily: F_BODY, fontSize: 13, padding: "5px 7px", border: `1px solid ${RULE}`, borderRadius: 5, boxSizing: "border-box" }} />
+                  </td>
                   <td style={{ padding: "6px 8px", textAlign: "right" }}>
-                    <input type="number" min="0" value={it.qty} onChange={(e) => setItem(it.id, { qty: e.target.value })}
+                    <input type="number" min="0" onWheel={preventWheelChange} value={it.qty} onChange={(e) => setItem(it.id, { qty: e.target.value })}
                       style={{ width: 60, textAlign: "right", fontFamily: F_MONO, fontSize: 13, padding: "5px 7px", border: `1px solid ${RULE}`, borderRadius: 5 }} />
                   </td>
-                  <td style={{ padding: "8px 10px", textAlign: "right" }}>{it.unit}</td>
                   <td style={{ padding: "6px 8px", textAlign: "right" }}>
-                    <input type="number" min="0" value={it.rate} onChange={(e) => { setItem(it.id, { rate: e.target.value }); setMissingIds((m) => m.filter((x) => x !== it.id)); }}
+                    <select value={it.unit} onChange={(e) => setItem(it.id, { unit: e.target.value })}
+                      style={{ width: 72, fontFamily: F_BODY, fontSize: 13, padding: "5px 4px", border: `1px solid ${RULE}`, borderRadius: 5 }}>
+                      {UNIT_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                  </td>
+                  <td style={{ padding: "6px 8px", textAlign: "right" }}>
+                    <input type="number" min="0" onWheel={preventWheelChange} value={it.rate} onChange={(e) => { setItem(it.id, { rate: e.target.value }); setMissingIds((m) => m.filter((x) => x !== it.id)); }}
                       style={{ width: 80, textAlign: "right", fontFamily: F_MONO, fontSize: 13, padding: "5px 7px", border: `1px solid ${missingIds.includes(it.id) ? STAMP_RED : RULE}`, borderRadius: 5, background: missingIds.includes(it.id) ? "#FCEBEB" : "#fff" }} />
                   </td>
                   <td style={{ padding: "6px 8px", textAlign: "right" }}>
-                    <input type="number" min="0" value={it.gstPercent} onChange={(e) => setItem(it.id, { gstPercent: e.target.value })}
+                    <input type="number" min="0" onWheel={preventWheelChange} value={it.gstPercent} onChange={(e) => setItem(it.id, { gstPercent: e.target.value })}
                       style={{ width: 60, textAlign: "right", fontFamily: F_MONO, fontSize: 13, padding: "5px 7px", border: `1px solid ${RULE}`, borderRadius: 5 }} />
                   </td>
                   <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: F_MONO, color: INK_SOFT }}>{rupee(gstAmt)}</td>
