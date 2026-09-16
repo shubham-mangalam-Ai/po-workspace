@@ -3,3 +3,15 @@ html, body { margin: 0; padding: 0; background: #F7F7F9; font-family: 'Inter', s
 button { font-family: inherit; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #D5D7DB; border-radius: 4px; }
+
+/* Hide the native up/down spinner on number inputs everywhere in the app.
+   The spinner arrows are what make scroll-wheel-over-an-input accidentally
+   change the value while someone is just scrolling the page. */
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type=number] {
+  -moz-appearance: textfield;
+}
