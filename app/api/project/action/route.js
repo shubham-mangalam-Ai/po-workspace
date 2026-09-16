@@ -89,6 +89,41 @@ export async function POST(request) {
       return NextResponse.json({ ok: true, request: sanitizeRequestForProject(newReq) });
     }
 
+    if (action === "update") {
+      // Lets the requesting company edit their own STILL-PENDING request's
+      // materials (description/qty/unit) -- never rate or gstPercent,
+      // which only exist once admin starts pricing, and never once
+      // status has moved past "pending" (at that point admin is already
+      // working on it via Process POs, so the item list is locked here).
+      const { requestId, items } = body;
+      const target = allRequests.find((r) => r.id === requestId);
+      if (!target || target.companyId !== company.id) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      if (target.status !== "pending") {
+        return NextResponse.json({ error: "Only a still-pending request can be edited" }, { status: 400 });
+      }
+      const cleanItems = (Array.isArray(items) ? items : [])
+        .filter((it) => it && String(it.description || "").trim())
+        .map((it) => {
+          const existing = target.items.find((x) => x.id === it.id);
+          return {
+            id: existing ? existing.id : uid(),
+            description: String(it.description).trim(),
+            qty: it.qty === "" || it.qty === undefined ? 1 : it.qty,
+            unit: it.unit || "pkt",
+            rate: existing ? existing.rate : "",
+            gstPercent: existing ? existing.gstPercent : 18,
+          };
+        });
+      if (!cleanItems.length) {
+        return NextResponse.json({ error: "Add at least one material line" }, { status: 400 });
+      }
+      const next = allRequests.map((r) => (r.id === requestId ? { ...r, items: cleanItems } : r));
+      await saveRequests(supabase, next);
+      return NextResponse.json({ ok: true });
+    }
+
     if (action === "cancel") {
       const { requestId } = body;
       const target = allRequests.find((r) => r.id === requestId);
